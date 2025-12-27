@@ -1,0 +1,132 @@
+{
+  "info": {
+    "name": "Medlan Backend API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman collection for Medlan Backend. Set baseUrl to http://localhost/medlan-backend/public"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost/medlan-backend/public" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        { "name": "Login", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/auth/login", "body": { "mode": "raw", "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}" } } },
+        { "name": "Me", "request": { "method": "GET", "url": "{{baseUrl}}/api/auth/me" } },
+        { "name": "Logout", "request": { "method": "POST", "url": "{{baseUrl}}/api/auth/logout" } }
+      ]
+    },
+    {
+      "name": "Categories",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/categories" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/categories?id=1" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/categories", "body": { "mode": "raw", "raw": "{\n  \"name\": \"Masks\",\n  \"display_order\": 1,\n  \"is_active\": 1\n}" } } },
+        { "name": "Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/categories?id=1", "body": { "mode": "raw", "raw": "{\n  \"name\": \"Masks & PPE\"\n}" } } },
+        { "name": "Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/categories?id=1" } }
+      ]
+    },
+    {
+      "name": "Subcategories",
+      "item": [
+        { "name": "List (by category)", "request": { "method": "GET", "url": "{{baseUrl}}/api/subcategories?category_id=1" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/subcategories?id=3" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/subcategories", "body": { "mode": "raw", "raw": "{\n  \"category_id\": 1,\n  \"name\": \"Surgical Masks\",\n  \"is_active\": 1\n}" } } },
+        { "name": "Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/subcategories?id=3", "body": { "mode": "raw", "raw": "{\n  \"name\": \"Surgical Masks Pro\"\n}" } } },
+        { "name": "Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/subcategories?id=3" } }
+      ]
+    },
+    {
+      "name": "Brands",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/brands" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/brands?id=1" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/brands", "body": { "mode": "raw", "raw": "{\n  \"name\": \"MedCare\",\n  \"is_active\": 1\n}" } } },
+        { "name": "Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/brands?id=1", "body": { "mode": "raw", "raw": "{\n  \"name\": \"MedCare Global\"\n}" } } },
+        { "name": "Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/brands?id=1" } }
+      ]
+    },
+    {
+      "name": "Colors",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/colors" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/colors?id=1" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/colors", "body": { "mode": "raw", "raw": "{\n  \"name\": \"Navy\",\n  \"hexa_number\": \"#001F3F\"\n}" } } },
+        { "name": "Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/colors?id=1", "body": { "mode": "raw", "raw": "{\n  \"hexa_number\": \"FFAA00\"\n}" } } },
+        { "name": "Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/colors?id=1" } }
+      ]
+    },
+    {
+      "name": "Sizes",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/sizes" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/sizes?id=1" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/sizes", "body": { "mode": "raw", "raw": "{\n  \"name\": \"XL\"\n}" } } },
+        { "name": "Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/sizes?id=1", "body": { "mode": "raw", "raw": "{\n  \"name\": \"2XL\"\n}" } } },
+        { "name": "Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/sizes?id=1" } }
+      ]
+    },
+    {
+      "name": "Products",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/products?category_id=1&brand_id=1&search=mask&page=1&per_page=20" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/products?id=1" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/products", "body": { "mode": "raw", "raw": "{\n  \"name\": \"Surgical Mask\",\n  \"category_id\": 1,\n  \"brand_id\": 1,\n  \"base_price\": 4.50,\n  \"purchase_price\": 2.00,\n  \"is_active\": 1,\n  \"is_featured\": 0,\n  \"short_description\": \"3-ply mask\",\n  \"long_description\": \"Medical grade\"\n}" } } },
+        { "name": "Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/products?id=1", "body": { "mode": "raw", "raw": "{\n  \"name\": \"Surgical Mask Pro\",\n  \"is_featured\": 1\n}" } } },
+        { "name": "Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/products?id=1" } },
+        { "name": "Specs List", "request": { "method": "GET", "url": "{{baseUrl}}/api/products/1/specs" } },
+        { "name": "Specs Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/products/1/specs", "body": { "mode": "raw", "raw": "{\n  \"sku_variant\": \"MASK-BLUE-S\",\n  \"spec_key\": \"Color\",\n  \"spec_value\": \"Blue\",\n  \"price\": 4.50,\n  \"stock\": 100,\n  \"color_id\": 1,\n  \"size_id\": 2,\n  \"weight\": 0.10,\n  \"is_active\": 1\n}" } } },
+        { "name": "Spec Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/specs?id=12", "body": { "mode": "raw", "raw": "{\n  \"price\": 4.25,\n  \"stock\": 120\n}" } } },
+        { "name": "Spec Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/specs?id=12" } },
+        { "name": "Image Upload", "request": { "method": "POST", "url": "{{baseUrl}}/api/products/1/images", "body": { "mode": "formdata", "formdata": [ { "key": "image", "type": "file", "src": "" }, { "key": "alt_text", "value": "Surgical Mask blue" }, { "key": "sort_order", "value": "1" }, { "key": "is_primary", "value": "1" } ] } } },
+        { "name": "Image Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/images?id=33" } }
+      ]
+    },
+    {
+      "name": "Promotions",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/promotions?active=1&date_from=2025-12-01&date_to=2026-01-31" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/promotions?id=3" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/promotions", "body": { "mode": "raw", "raw": "{\n  \"name\": \"Winter Sale 2025\",\n  \"description\": \"Up to 20%\",\n  \"discount_type\": \"percentage\",\n  \"discount_value\": 20,\n  \"start_date\": \"2025-12-20\",\n  \"end_date\": \"2026-01-10\",\n  \"is_active\": 1,\n  \"priority\": 10\n}" } } },
+        { "name": "Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/promotions?id=3", "body": { "mode": "raw", "raw": "{\n  \"is_active\": 0\n}" } } },
+        { "name": "Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/promotions?id=3" } },
+        { "name": "Add Item", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/promotions/3/items", "body": { "mode": "raw", "raw": "{\n  \"product_spec_id\": 12\n}" } } },
+        { "name": "Remove Item", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/promotions/3/items?spec_id=12" } }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/orders", "body": { "mode": "raw", "raw": "{\n  \"customer_name\": \"Ali\",\n  \"phone_number\": \"0750xxxxxxx\",\n  \"address\": \"Erbil, 60m street\",\n  \"order_source\": \"website\",\n  \"items\": [\n    { \"product_spec_id\": 12, \"quantity\": 2 },\n    { \"product_spec_id\": 15, \"quantity\": 1 }\n  ]\n}" } } },
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/orders?status=pending&source=website" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/orders?id=101" } },
+        { "name": "Update Status", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/orders/status?id=101", "body": { "mode": "raw", "raw": "{\n  \"status\": \"processing\"\n}" } } }
+      ]
+    },
+    {
+      "name": "Stock",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/stock?product_spec_id=12" } },
+        { "name": "Adjust", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/stock/adjust", "body": { "mode": "raw", "raw": "{\n  \"product_spec_id\": 12,\n  \"quantity\": 50,\n  \"description\": \"initial load\"\n}" } } }
+      ]
+    },
+    {
+      "name": "Feedback",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/products/5/feedback" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/products/5/feedback", "body": { "mode": "raw", "raw": "{\n  \"customer_name\": \"Ali\",\n  \"rating\": 5,\n  \"comment\": \"Great product!\"\n}" } } },
+        { "name": "Approve", "request": { "method": "PATCH", "url": "{{baseUrl}}/api/feedback/approve?id=9" } }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/api/users" } },
+        { "name": "Show", "request": { "method": "GET", "url": "{{baseUrl}}/api/users?id=2" } },
+        { "name": "Create", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/users", "body": { "mode": "raw", "raw": "{\n  \"username\": \"newuser\",\n  \"email\": \"new@user.com\",\n  \"password\": \"pass123\",\n  \"role\": \"employee\"\n}" } } },
+        { "name": "Update", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" } ], "url": "{{baseUrl}}/api/users?id=2", "body": { "mode": "raw", "raw": "{\n  \"phone\": \"07501234500\"\n}" } } },
+        { "name": "Delete", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/users?id=2" } }
+      ]
+    }
+  ]
+}
