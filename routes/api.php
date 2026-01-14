@@ -218,12 +218,51 @@ function handle_api_route(array $segments, string $method): void
             $controller = new ProductController();
             $specId = $_GET['id'] ?? (isset($segments[2]) ? (int)$segments[2] : null);
             if ($specId === null) { jsonResponse(false, 'ID is required', null, 400); return; }
+            if (isset($segments[3]) && $segments[3] === 'image') {
+                switch ($method) {
+                    case 'POST':
+                        $controller->specImageUpload($specId);
+                        return;
+                    default:
+                        jsonResponse(false, 'Method not allowed', null, 405);
+                        return;
+                }
+            }
+            if (isset($segments[3]) && $segments[3] === 'images') {
+                switch ($method) {
+                    case 'GET':
+                        $controller->specImagesList($specId);
+                        return;
+                    case 'POST':
+                        $controller->specImagesUpload($specId);
+                        return;
+                    default:
+                        jsonResponse(false, 'Method not allowed', null, 405);
+                        return;
+                }
+            }
             switch ($method) {
                 case 'PATCH':
                     $controller->specUpdate($specId);
                     return;
                 case 'DELETE':
                     $controller->specDestroy($specId);
+                    return;
+                default:
+                    jsonResponse(false, 'Method not allowed', null, 405);
+                    return;
+            }
+        case 'spec-images':
+            $controller = new ProductController();
+            $imageId = $_GET['id'] ?? (isset($segments[2]) ? (int)$segments[2] : null);
+            if ($imageId === null) { jsonResponse(false, 'ID is required', null, 400); return; }
+            switch ($method) {
+                case 'DELETE':
+                    $controller->specImageDestroy($imageId);
+                    return;
+                case 'PUT':
+                case 'PATCH':
+                    $controller->specImageSetPrimary($imageId);
                     return;
                 default:
                     jsonResponse(false, 'Method not allowed', null, 405);
@@ -294,8 +333,44 @@ function handle_api_route(array $segments, string $method): void
                 case 'total-profit':
                     if ($method === 'GET') { $controller->totalProfit(); } else { jsonResponse(false, 'Method not allowed', null, 405); }
                     return;
+                case 'expenses-summary':
+                    if ($method === 'GET') {
+                        $exp = new ExpenseController();
+                        $exp->summary();
+                    } else { jsonResponse(false, 'Method not allowed', null, 405); }
+                    return;
                 default:
                     jsonResponse(false, 'Endpoint not found', null, 404);
+                    return;
+            }
+        case 'expenses':
+            $controller = new ExpenseController();
+            $id = $_GET['id'] ?? null;
+            switch ($method) {
+                case 'GET':
+                    if (isset($segments[2]) && $segments[2] === 'summary') { $controller->summary(); return; }
+                    $controller->index();
+                    return;
+                case 'POST':
+                    $controller->create();
+                    return;
+                case 'PUT':
+                case 'PATCH':
+                    if ($id !== null) {
+                        $controller->update($id);
+                    } else {
+                        jsonResponse(false, 'ID is required', null, 400);
+                    }
+                    return;
+                case 'DELETE':
+                    if ($id !== null) {
+                        $controller->destroy($id);
+                    } else {
+                        jsonResponse(false, 'ID is required', null, 400);
+                    }
+                    return;
+                default:
+                    jsonResponse(false, 'Method not allowed', null, 405);
                     return;
             }
         case 'stock':

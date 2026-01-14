@@ -85,7 +85,7 @@ class OrderController
                 if ($specId <= 0) {
                     throw new Exception('invalid spec id');
                 }
-                $row = $conn->prepare('SELECT ps.price AS spec_price, ps.product_id, ps.stock AS stock, p.purchase_price AS cost FROM product_specifications ps INNER JOIN products p ON p.id = ps.product_id WHERE ps.id = ?');
+                $row = $conn->prepare('SELECT ps.price AS spec_price, ps.product_id, ps.stock AS stock, COALESCE(ps.purchase_price, p.purchase_price) AS cost FROM product_specifications ps INNER JOIN products p ON p.id = ps.product_id WHERE ps.id = ?');
                 $row->bind_param('i', $specId);
                 $row->execute();
                 $r = $row->get_result()->fetch_assoc();

@@ -35,6 +35,23 @@ class DashboardController
         $counts['orders_returned'] = $q12 ? (int)($q12->fetch_assoc()['c'] ?? 0) : 0;
         $q13 = $conn->query("SELECT COALESCE(AVG(total_price),0) AS a FROM orders WHERE status = 'completed' AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
         $counts['aov_30d'] = $q13 ? (float)($q13->fetch_assoc()['a'] ?? 0) : 0.0;
+        // Expenses
+        $e1 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) = CURDATE()");
+        $counts['expenses_today'] = $e1 ? (float)($e1->fetch_assoc()['t'] ?? 0) : 0.0;
+        $e7 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
+        $counts['expenses_7d'] = $e7 ? (float)($e7->fetch_assoc()['t'] ?? 0) : 0.0;
+        $e30 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
+        $counts['expenses_30d'] = $e30 ? (float)($e30->fetch_assoc()['t'] ?? 0) : 0.0;
+        // Profit after expenses (net) based on vw_sales_report total_profit
+        $p1 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) = CURDATE()");
+        $p7 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
+        $p30 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
+        $net1 = ($p1 ? (float)($p1->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_today'];
+        $net7 = ($p7 ? (float)($p7->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_7d'];
+        $net30 = ($p30 ? (float)($p30->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_30d'];
+        $counts['net_profit_today'] = $net1;
+        $counts['net_profit_7d'] = $net7;
+        $counts['net_profit_30d'] = $net30;
         jsonResponse(true, 'OK', ['summary' => $counts]);
     }
 

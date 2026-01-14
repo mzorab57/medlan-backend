@@ -18,6 +18,7 @@ class ProductController
         $where = $filters ? ('WHERE ' . implode(' AND ', $filters)) : '';
         $sql = "SELECT p.id, p.name, p.code, p.slug, p.base_price, p.purchase_price, p.is_featured, p.is_active,
                        b.name AS brand_name, cat.name AS category_name, sub.name AS subcategory_name,
+                       (SELECT COALESCE(SUM(stock),0) FROM product_specifications WHERE product_id = p.id) AS total_stock,
                        COALESCE(pi.image, (SELECT image FROM product_images WHERE product_id = p.id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1)) AS primary_image
                 FROM products p
                 LEFT JOIN brands b ON b.id = p.brand_id
@@ -58,7 +59,7 @@ class ProductController
         $images = [];
         $ri = $istmt->get_result();
         while ($r = $ri->fetch_assoc()) { $images[] = $r; }
-        $sstmt = $conn->prepare('SELECT id, sku_variant, spec_key, spec_value, price, stock, color_id, size_id, weight, is_active FROM product_specifications WHERE product_id = ? ORDER BY id');
+        $sstmt = $conn->prepare('SELECT id, sku_variant, spec_key, spec_value, image, price, purchase_price, stock, color_id, size_id, gender, is_active FROM product_specifications WHERE product_id = ? ORDER BY id');
         $sstmt->bind_param('i', $id);
         $sstmt->execute();
         $specs = [];
@@ -72,7 +73,7 @@ class ProductController
         global $conn;
         $pid = (int)$productId;
         $st = $conn->prepare('SELECT 
-                ps.id, ps.sku_variant, ps.spec_key, ps.spec_value, ps.price, ps.stock, ps.color_id, ps.size_id, ps.weight, ps.is_active,
+                ps.id, ps.sku_variant, ps.spec_key, ps.spec_value, ps.image, ps.price, ps.purchase_price, ps.stock, ps.color_id, ps.size_id, ps.gender, ps.is_active,
                 c.name AS color_name, 
                 s.name AS size_name,
                 v.final_price,
@@ -101,16 +102,20 @@ class ProductController
         $spec_key = sanitize($data['spec_key'] ?? '');
         $spec_value = sanitize($data['spec_value'] ?? '');
         $sku = sanitize($data['sku_variant'] ?? '');
+        $image = sanitize($data['image'] ?? '');
+        if ($image === '') { $image = null; }
+        $purchase_price = isset($data['purchase_price']) ? (float)$data['purchase_price'] : null;
         $color_id = isset($data['color_id']) ? (int)$data['color_id'] : null;
         $size_id = isset($data['size_id']) ? (int)$data['size_id'] : null;
-        $weight = isset($data['weight']) ? (float)$data['weight'] : null;
+        $gender = sanitize($data['gender'] ?? '');
+        if ($gender === '') { $gender = null; }
         $active = (int)($data['is_active'] ?? 1);
         if ($price <= 0) {
             jsonResponse(false, 'price required', null, 422);
             return;
         }
-        $st = $conn->prepare('INSERT INTO product_specifications (product_id, sku_variant, spec_key, spec_value, price, stock, color_id, size_id, weight, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        $st->bind_param('isssdiiddi', $pid, $sku, $spec_key, $spec_value, $price, $stock, $color_id, $size_id, $weight, $active);
+        $st = $conn->prepare('INSERT INTO product_specifications (product_id, sku_variant, spec_key, spec_value, image, price, purchase_price, stock, color_id, size_id, gender, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $st->bind_param('isssssddiiisi', $pid, $sku, $spec_key, $spec_value, $image, $price, $purchase_price, $stock, $color_id, $size_id, $gender, $active);
         if (!$st->execute()) {
             jsonResponse(false, 'Error', null, 500);
             return;
@@ -137,11 +142,13 @@ class ProductController
             'sku_variant' => 's',
             'spec_key' => 's',
             'spec_value' => 's',
+            'image' => 's',
             'price' => 'd',
+            'purchase_price' => 'd',
             'stock' => 'i',
             'color_id' => 'i',
             'size_id' => 'i',
-            'weight' => 'd',
+            'gender' => 's',
             'is_active' => 'i'
         ];
         foreach ($map as $key => $t) {
@@ -180,6 +187,136 @@ class ProductController
         jsonResponse(true, 'Deleted', ['deleted' => true]);
     }
 
+    public function specImagesList($specId): void
+    {
+        global $conn;
+        $sid = (int)$specId;
+        $st = $conn->prepare('SELECT id, spec_id, image, alt_text, sort_order, is_primary, created_at FROM product_spec_images WHERE spec_id = ? ORDER BY sort_order, id');
+        $st->bind_param('i', $sid);
+        $st->execute();
+        $rows = [];
+        $res = $st->get_result();
+        while ($r = $res->fetch_assoc()) { $rows[] = $r; }
+        jsonResponse(true, 'OK', ['data' => $rows]);
+    }
+
+    public function specImagesUpload($specId): void
+    {
+        global $conn;
+        $sid = (int)$specId;
+        $has = $conn->prepare('SELECT id FROM product_specifications WHERE id = ?');
+        $has->bind_param('i', $sid);
+        $has->execute();
+        if (!$has->get_result()->fetch_assoc()) {
+            jsonResponse(false, 'Not Found', null, 404);
+            return;
+        }
+        if (!isset($_FILES['image'])) {
+            jsonResponse(false, 'image file required', null, 422);
+            return;
+        }
+        $max = getenv('MAX_FILE_SIZE') ? (int)getenv('MAX_FILE_SIZE') : 5242880;
+        $uploadBase = getenv('UPLOAD_PATH') ?: 'uploads/';
+        $destDir = __DIR__ . '/../' . rtrim($uploadBase, '/\\') . '/products/specs/';
+        $ok = FileUpload::save('image', $destDir, ['jpg','jpeg','png','webp'], $max, null);
+        if (!$ok[0]) {
+            jsonResponse(false, $ok[1], null, 422);
+            return;
+        }
+        $absolute = $ok[2];
+        $relative = str_replace(realpath(__DIR__ . '/..') . DIRECTORY_SEPARATOR, '', realpath($absolute)) ?: (rtrim($uploadBase, '/\\') . '/products/specs/' . basename($absolute));
+        $alt = sanitize($_POST['alt_text'] ?? '');
+        $sort = (int)($_POST['sort_order'] ?? 0);
+        $primary = (int)($_POST['is_primary'] ?? 0);
+        // If no images exist yet for this variant, set first upload as primary by default
+        $cnt = 0;
+        $cntStmt = $conn->prepare('SELECT COUNT(*) AS c FROM product_spec_images WHERE spec_id = ?');
+        $cntStmt->bind_param('i', $sid);
+        $cntStmt->execute();
+        $cntRes = $cntStmt->get_result()->fetch_assoc();
+        if ($cntRes && isset($cntRes['c'])) { $cnt = (int)$cntRes['c']; }
+        if ($cnt === 0) { $primary = 1; }
+        if ($primary) {
+            $off = $conn->prepare('UPDATE product_spec_images SET is_primary = 0 WHERE spec_id = ?');
+            $off->bind_param('i', $sid);
+            $off->execute();
+        }
+        $st = $conn->prepare('INSERT INTO product_spec_images (spec_id, image, alt_text, sort_order, is_primary) VALUES (?, ?, ?, ?, ?)');
+        $st->bind_param('issii', $sid, $relative, $alt, $sort, $primary);
+        $st->execute();
+        jsonResponse(true, 'Created', ['id' => (int)$conn->insert_id, 'image' => $relative], 201);
+    }
+
+    public function specImageDestroy($imageId): void
+    {
+        global $conn;
+        $iid = (int)$imageId;
+        $st = $conn->prepare('SELECT image FROM product_spec_images WHERE id = ?');
+        $st->bind_param('i', $iid);
+        $st->execute();
+        $row = $st->get_result()->fetch_assoc();
+        if ($row && isset($row['image'])) {
+            $file = __DIR__ . '/../' . $row['image'];
+            if (is_file($file)) @unlink($file);
+        }
+        $del = $conn->prepare('DELETE FROM product_spec_images WHERE id = ?');
+        $del->bind_param('i', $iid);
+        $del->execute();
+        jsonResponse(true, 'Deleted', ['deleted' => true]);
+    }
+
+    public function specImageSetPrimary($imageId): void
+    {
+        global $conn;
+        $iid = (int)$imageId;
+        $st = $conn->prepare('SELECT spec_id FROM product_spec_images WHERE id = ?');
+        $st->bind_param('i', $iid);
+        $st->execute();
+        $row = $st->get_result()->fetch_assoc();
+        if (!$row) {
+            jsonResponse(false, 'Not Found', null, 404);
+            return;
+        }
+        $sid = (int)$row['spec_id'];
+        $off = $conn->prepare('UPDATE product_spec_images SET is_primary = 0 WHERE spec_id = ?');
+        $off->bind_param('i', $sid);
+        $off->execute();
+        $on = $conn->prepare('UPDATE product_spec_images SET is_primary = 1 WHERE id = ?');
+        $on->bind_param('i', $iid);
+        $on->execute();
+        jsonResponse(true, 'Updated', ['updated' => true]);
+    }
+    public function specImageUpload($specId): void
+    {
+        global $conn;
+        $sid = (int)$specId;
+        $row = $conn->prepare('SELECT id FROM product_specifications WHERE id = ?');
+        $row->bind_param('i', $sid);
+        $row->execute();
+        if (!$row->get_result()->fetch_assoc()) {
+            jsonResponse(false, 'Not Found', null, 404);
+            return;
+        }
+        if (!isset($_FILES['image'])) {
+            jsonResponse(false, 'image file required', null, 422);
+            return;
+        }
+        $max = getenv('MAX_FILE_SIZE') ? (int)getenv('MAX_FILE_SIZE') : 5242880;
+        $uploadBase = getenv('UPLOAD_PATH') ?: 'uploads/';
+        $destDir = __DIR__ . '/../' . rtrim($uploadBase, '/\\') . '/products/specs/';
+        $ok = FileUpload::save('image', $destDir, ['jpg','jpeg','png','webp'], $max, null);
+        if (!$ok[0]) {
+            jsonResponse(false, $ok[1], null, 422);
+            return;
+        }
+        $absolute = $ok[2];
+        $relative = str_replace(realpath(__DIR__ . '/..') . DIRECTORY_SEPARATOR, '', realpath($absolute)) ?: (rtrim($uploadBase, '/\\') . '/products/specs/' . basename($absolute));
+        $alt = sanitize($_POST['alt_text'] ?? '');
+        $st = $conn->prepare('UPDATE product_specifications SET image = ? WHERE id = ?');
+        $st->bind_param('si', $relative, $sid);
+        $st->execute();
+        jsonResponse(true, 'Updated', ['image' => $relative]);
+    }
     public function imagesUpload($productId): void
     {
         global $conn;
@@ -300,10 +437,11 @@ class ProductController
     {
         global $conn;
         $id = (int)$id;
-        $exists = $conn->prepare('SELECT id FROM products WHERE id = ?');
-        $exists->bind_param('i', $id);
-        $exists->execute();
-        if (!$exists->get_result()->fetch_assoc()) {
+        $oldq = $conn->prepare('SELECT id, base_price FROM products WHERE id = ?');
+        $oldq->bind_param('i', $id);
+        $oldq->execute();
+        $oldRow = $oldq->get_result()->fetch_assoc();
+        if (!$oldRow) {
             jsonResponse(false, 'Not Found', null, 404);
             return;
         }
@@ -325,6 +463,7 @@ class ProductController
             'is_active' => 'i',
             'is_featured' => 'i'
         ];
+        $willUpdateBase = array_key_exists('base_price', $d);
         foreach ($map as $key => $t) {
             if (array_key_exists($key, $d)) {
                 $fields[] = "$key = ?";
@@ -359,6 +498,15 @@ class ProductController
             jsonResponse(false, 'Error', null, 500);
             return;
         }
+        if ($willUpdateBase) {
+            $oldBase = isset($oldRow['base_price']) ? (float)$oldRow['base_price'] : null;
+            $newBase = isset($d['base_price']) ? (float)$d['base_price'] : null;
+            if ($oldBase !== null && $newBase !== null && $newBase != $oldBase) {
+                $us = $conn->prepare('UPDATE product_specifications SET price = ? WHERE product_id = ? AND price = ?');
+                $us->bind_param('dii', $newBase, $id, $oldBase);
+                $us->execute();
+            }
+        }
         jsonResponse(true, 'Updated', ['updated' => true]);
     }
 
@@ -366,9 +514,28 @@ class ProductController
     {
         global $conn;
         $id = (int)$id;
-        $st = $conn->prepare('DELETE FROM products WHERE id = ?');
-        $st->bind_param('i', $id);
-        $st->execute();
-        jsonResponse(true, 'Deleted', ['deleted' => true]);
+        $ref = $conn->prepare('SELECT COUNT(*) AS c FROM order_items WHERE product_id = ?');
+        $ref->bind_param('i', $id);
+        $ref->execute();
+        $r = $ref->get_result()->fetch_assoc();
+        $cnt = $r ? (int)$r['c'] : 0;
+        if ($cnt > 0) {
+            $upd = $conn->prepare('UPDATE products SET is_active = 0 WHERE id = ?');
+            $upd->bind_param('i', $id);
+            if ($upd->execute()) {
+                jsonResponse(true, 'Archived (referenced by orders)', ['archived' => true, 'order_items' => $cnt]);
+            } else {
+                jsonResponse(false, 'Cannot archive', null, 500);
+            }
+            return;
+        }
+        try {
+            $st = $conn->prepare('DELETE FROM products WHERE id = ?');
+            $st->bind_param('i', $id);
+            $st->execute();
+            jsonResponse(true, 'Deleted', ['deleted' => true]);
+        } catch (Throwable $e) {
+            jsonResponse(false, 'Delete failed', ['detail' => $e->getMessage()], 500);
+        }
     }
 }

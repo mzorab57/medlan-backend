@@ -3,7 +3,7 @@
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
 // Allow any localhost port (e.g., 5173, 5174, 3000) and 127.0.0.1
-if (preg_match('#^https?://(localhost|127\.0\.0\.1)(:\d+)?$#', $origin)) {
+if (preg_match('#^https?://(localhost|127\.0\.0\.1)(:\d+)?$#', $origin) || preg_match('#^https?://(www\.)?medlan-sul\.com$#', $origin)) {
     header("Access-Control-Allow-Origin: $origin");
 }
 

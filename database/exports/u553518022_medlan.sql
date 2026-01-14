@@ -1,38 +1,29 @@
--- ======================================
--- خشتەی بەکارهێنەران (Users/Admins)
--- ======================================
+-- Database: u553518022_medlan
+CREATE DATABASE IF NOT EXISTS `u553518022_medlan` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE `u553518022_medlan`;
 
+-- Schema
+-- Users/Admins
 CREATE TABLE users (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(100) NOT NULL UNIQUE COMMENT 'ناوی بەکارهێنەر بۆ لۆگین',
-    email VARCHAR(255) NOT NULL UNIQUE COMMENT 'ئیمەیڵ',
-    password VARCHAR(255) NOT NULL COMMENT 'پاسوۆردی hash کراو',
-    full_name VARCHAR(255) NOT NULL COMMENT 'ناوی تەواو',
-    phone VARCHAR(20) COMMENT 'ژمارەی مۆبایل',
-    avatar VARCHAR(1000) COMMENT 'وێنەی پرۆفایل',
-    role ENUM('admin', 'employee') DEFAULT 'employee' COMMENT 'ڕۆڵ: admin یان employee',
-    is_active TINYINT(1) DEFAULT 1 COMMENT 'چالاک یان لەکارخستراو',
-    last_login TIMESTAMP NULL COMMENT 'کاتی کۆتایی لۆگین',
+    username VARCHAR(100) NOT NULL UNIQUE,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    phone VARCHAR(20),
+    avatar VARCHAR(1000),
+    role ENUM('admin', 'employee') DEFAULT 'employee',
+    is_active TINYINT(1) DEFAULT 1,
+    last_login TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Index بۆ خێراکردن
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_active ON users(is_active);
 
--- تێبینی: پاسوۆردی ڕاستەقینە لە PHP دا دروست دەکرێت:
--- password_hash('admin123', PASSWORD_DEFAULT)
-
--- ======================================
--- Database Schema for Medlan E-commerce
--- Medical Supply Online Store
--- Final Version - December 2025
--- ======================================
-
--- 1. خشتەی پۆلەکان (Categories)
+-- Categories
 CREATE TABLE categories (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -44,7 +35,7 @@ CREATE TABLE categories (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 2. خشتەی ژێرپۆلەکان (Subcategories)
+-- Subcategories
 CREATE TABLE subcategories (
     id INT AUTO_INCREMENT PRIMARY KEY,
     category_id INT NOT NULL,
@@ -58,7 +49,7 @@ CREATE TABLE subcategories (
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 3. خشتەی براندەکان (Brands)
+-- Brands
 CREATE TABLE brands (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -69,7 +60,7 @@ CREATE TABLE brands (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 4. خشتەی کاڵاکان (Products)
+-- Products
 CREATE TABLE products (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -80,8 +71,8 @@ CREATE TABLE products (
     category_id INT NOT NULL,
     short_description VARCHAR(512),
     long_description TEXT,
-    base_price DECIMAL(12,2) NOT NULL COMMENT 'نرخی فرۆشتنی بنەڕەتی - بەکاردێت وەک default بۆ variants',
-    purchase_price DECIMAL(12,2) NOT NULL COMMENT 'نرخی کڕینی ڕاستەقینە - یەکسانە بۆ هەموو variants',
+    base_price DECIMAL(12,2) NOT NULL,
+    purchase_price DECIMAL(12,2) NOT NULL,
     is_active TINYINT(1) DEFAULT 1,
     is_featured TINYINT(1) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -91,35 +82,33 @@ CREATE TABLE products (
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 5. خشتەی ڕەنگەکان (Colors)
+-- Colors
 CREATE TABLE colors (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
-    hexa_number VARCHAR(7) NOT NULL COMMENT 'کۆدی ڕەنگ بە فۆرماتی #FFFFFF',
+    hexa_number VARCHAR(7) NOT NULL,
     is_active TINYINT(1) DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 6. خشتەی سایزەکان (Sizes)
+-- Sizes
 CREATE TABLE sizes (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     is_active TINYINT(1) DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 7. خشتەی وردەکاریەکانی کاڵا / Variants (Product Specifications)
+-- Product Specifications
 CREATE TABLE product_specifications (
     id INT AUTO_INCREMENT PRIMARY KEY,
     product_id INT NOT NULL,
-    sku_variant VARCHAR(64) COMMENT 'کۆدی تایبەتی variant',
-    spec_key VARCHAR(255) COMMENT 'ناوی تایبەتمەندی',
-    spec_value VARCHAR(1000) COMMENT 'نرخی تایبەتمەندی',
-    image VARCHAR(1000) COMMENT 'وێنەی سەرهێڵی ئەم variant ـە',
-    price DECIMAL(12,2) NOT NULL COMMENT 'نرخی فرۆشتن بۆ ئەم variant - دەتوانرێت جیاواز بێت لە base_price',
-    purchase_price DECIMAL(12,2) NULL COMMENT 'نرخی کڕین بۆ ئەم variant - دەستپێکە بە نرخی کڕینی بەرهەمی سەرهەڵ',
-    stock INT DEFAULT 0 COMMENT 'ژمارەی ئێستای کۆگا',
+    sku_variant VARCHAR(64),
+    spec_key VARCHAR(255),
+    spec_value VARCHAR(1000),
+    price DECIMAL(12,2) NOT NULL,
+    stock INT DEFAULT 0,
     color_id INT,
     size_id INT,
-    gender VARCHAR(16),
+    weight DECIMAL(10,2),
     is_active TINYINT(1) DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -128,7 +117,7 @@ CREATE TABLE product_specifications (
     FOREIGN KEY (size_id) REFERENCES sizes(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 8. خشتەی وێنەکانی کاڵا (Product Images)
+-- Product Images
 CREATE TABLE product_images (
     id INT AUTO_INCREMENT PRIMARY KEY,
     product_id INT NOT NULL,
@@ -140,66 +129,46 @@ CREATE TABLE product_images (
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Variant Images
-CREATE TABLE product_spec_images (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    spec_id INT NOT NULL,
-    image VARCHAR(1000) NOT NULL,
-    alt_text VARCHAR(255),
-    sort_order INT DEFAULT 0,
-    is_primary TINYINT(1) DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (spec_id) REFERENCES product_specifications(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ======================================
--- خشتەکانی Promotions System
--- ======================================
-
--- 9. خشتەی کامپەینەکانی داشکاندن (Promotions)
+-- Promotions
 CREATE TABLE promotions (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(255) NOT NULL COMMENT 'ناوی کامپەین، بۆ نموونە "Winter Sale 2025"',
-    description TEXT COMMENT 'وەسفی کامپەینەکە',
-    discount_type ENUM('percentage', 'fixed') NOT NULL COMMENT 'جۆری داشکاندن: سەدی یان نرخی ڕاستەوخۆ',
-    discount_value DECIMAL(10,2) NOT NULL COMMENT 'نرخی داشکاندن',
-    start_date DATE NOT NULL COMMENT 'بەرواری دەستپێکردن',
-    end_date DATE NOT NULL COMMENT 'بەرواری کۆتایی',
-    is_active TINYINT(1) DEFAULT 1 COMMENT 'چالاک یان ناچالاک',
-    priority INT DEFAULT 0 COMMENT 'ئەگەر چەندین promotion لەسەر یەک کاڵا هەبوو، ئەوەی priority زیاتری هەیە کار دەکات',
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    discount_type ENUM('percentage', 'fixed') NOT NULL,
+    discount_value DECIMAL(10,2) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    is_active TINYINT(1) DEFAULT 1,
+    priority INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 10. خشتەی پەیوەندکردنی Promotions بە Variants (Promotion Items)
+-- Promotion Items
 CREATE TABLE promotion_items (
     id INT AUTO_INCREMENT PRIMARY KEY,
     promotion_id INT NOT NULL,
-    product_spec_id INT NOT NULL COMMENT 'تایبەت بە variant دیاریکراو (ڕەنگ/سایز)',
+    product_spec_id INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
     FOREIGN KEY (product_spec_id) REFERENCES product_specifications(id) ON DELETE CASCADE,
-    UNIQUE KEY unique_promo_spec (promotion_id, product_spec_id) COMMENT 'بۆ ڕێگری لە دووبارەبوونەوە'
+    UNIQUE KEY unique_promo_spec (promotion_id, product_spec_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ======================================
--- خشتەکانی Cart و Orders
--- ======================================
-
--- 11. خشتەی سەبەتە (Carts)
+-- Carts
 CREATE TABLE carts (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    session_id VARCHAR(255) NOT NULL UNIQUE COMMENT 'بۆ یوزەری بێ لۆگین',
+    session_id VARCHAR(255) NOT NULL UNIQUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 12. خشتەی کاڵاکانی سەبەتە (Cart Items)
+-- Cart Items
 CREATE TABLE cart_items (
     id INT AUTO_INCREMENT PRIMARY KEY,
     cart_id INT NOT NULL,
     product_id INT NOT NULL,
-    product_spec_id INT COMMENT 'بۆ دیاریکردنی variant (ڕەنگ/سایز)',
+    product_spec_id INT,
     quantity INT NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE CASCADE,
@@ -207,7 +176,7 @@ CREATE TABLE cart_items (
     FOREIGN KEY (product_spec_id) REFERENCES product_specifications(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 13. خشتەی داواکارییەکان (Orders)
+-- Orders
 CREATE TABLE orders (
     id INT AUTO_INCREMENT PRIMARY KEY,
     customer_name VARCHAR(255) NOT NULL,
@@ -215,23 +184,23 @@ CREATE TABLE orders (
     address TEXT,
     total_price DECIMAL(12,2) NOT NULL,
     status ENUM('pending', 'processing', 'shipped', 'completed', 'cancelled', 'returned') DEFAULT 'pending',
-    order_source ENUM('website', 'whatsapp', 'instagram', 'manual') DEFAULT 'website' COMMENT 'سەرچاوەی داواکاری',
+    order_source ENUM('website', 'whatsapp', 'manual') DEFAULT 'website',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 14. خشتەی کاڵاکانی داواکاری (Order Items)
+-- Order Items
 CREATE TABLE order_items (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
     product_id INT NOT NULL,
-    product_spec_id INT COMMENT 'بۆ دیاریکردنی variant',
+    product_spec_id INT,
     quantity INT NOT NULL,
-    price DECIMAL(12,2) NOT NULL COMMENT 'نرخی فرۆشتن لەو کاتەدا (دوای discount)',
-    original_price DECIMAL(12,2) NOT NULL COMMENT 'نرخی سەرەتایی پێش discount',
-    cost DECIMAL(12,2) NOT NULL COMMENT 'نرخی کڕین لەو کاتەدا - بۆ حیسابی قازانج و پاراستن لە گۆڕانکاری',
-    discount_amount DECIMAL(12,2) DEFAULT 0 COMMENT 'بڕی داشکاندن',
-    promotion_id INT NULL COMMENT 'ئاماژە بە promotion ئەگەر بەکارهاتبێت',
+    price DECIMAL(12,2) NOT NULL,
+    original_price DECIMAL(12,2) NOT NULL,
+    cost DECIMAL(12,2) NOT NULL,
+    discount_amount DECIMAL(12,2) DEFAULT 0,
+    promotion_id INT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
@@ -239,30 +208,20 @@ CREATE TABLE order_items (
     FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 15. خشتەی جوڵەی کۆگا (Stock Movements)
+-- Stock Movements
 CREATE TABLE stock_movements (
     id INT AUTO_INCREMENT PRIMARY KEY,
     product_spec_id INT NOT NULL,
     type ENUM('sale', 'return', 'purchase', 'damage', 'adjustment') NOT NULL,
-    quantity INT NOT NULL COMMENT 'موجەب (+) بۆ زیادبوون، سالب (-) بۆ کەمبوون',
-    order_item_id INT NULL COMMENT 'تەنها بۆ sale و return پڕ دەبێتەوە',
-    description TEXT COMMENT 'تێبینی',
+    quantity INT NOT NULL,
+    order_item_id INT NULL,
+    description TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (product_spec_id) REFERENCES product_specifications(id) ON DELETE CASCADE,
     FOREIGN KEY (order_item_id) REFERENCES order_items(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 17. خشتەی خەرجی (Expenses)
-CREATE TABLE expenses (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    amount DECIMAL(12,2) NOT NULL,
-    category VARCHAR(100) DEFAULT 'general',
-    note TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 16. خشتەی فیدباک (Feedback)
+-- Feedback
 CREATE TABLE feedback (
     id INT AUTO_INCREMENT PRIMARY KEY,
     product_id INT NOT NULL,
@@ -276,42 +235,30 @@ CREATE TABLE feedback (
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ======================================
--- Index بۆ خێراکردنی گەڕانەکان
--- ======================================
+-- Indexes
 CREATE INDEX idx_products_slug ON products(slug);
 CREATE INDEX idx_products_category ON products(category_id);
 CREATE INDEX idx_products_subcategory ON products(subcategory_id);
 CREATE INDEX idx_products_brand ON products(brand_id);
 CREATE INDEX idx_products_active ON products(is_active);
 CREATE INDEX idx_products_featured ON products(is_featured);
-
 CREATE INDEX idx_product_specs_product ON product_specifications(product_id);
 CREATE INDEX idx_product_specs_color ON product_specifications(color_id);
 CREATE INDEX idx_product_specs_size ON product_specifications(size_id);
 CREATE INDEX idx_product_specs_active ON product_specifications(is_active);
-
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_source ON orders(order_source);
 CREATE INDEX idx_orders_created ON orders(created_at);
-
 CREATE INDEX idx_carts_session ON carts(session_id);
-
 CREATE INDEX idx_stock_movements_type ON stock_movements(type);
 CREATE INDEX idx_stock_movements_spec ON stock_movements(product_spec_id);
 CREATE INDEX idx_stock_movements_created ON stock_movements(created_at);
-
 CREATE INDEX idx_promotions_dates ON promotions(start_date, end_date);
 CREATE INDEX idx_promotions_active ON promotions(is_active);
-
 CREATE INDEX idx_promotion_items_spec ON promotion_items(product_spec_id);
 CREATE INDEX idx_promotion_items_promo ON promotion_items(promotion_id);
 
--- ======================================
--- Views بۆ ئاسانکاری لە Backend
--- ======================================
-
--- View بۆ بینینی نرخی کۆتایی لەگەڵ discount
+-- Views
 CREATE VIEW vw_product_prices AS
 SELECT
     ps.id AS spec_id,
@@ -365,7 +312,6 @@ LEFT JOIN promotions pr ON pr.id = pi.promotion_id
     AND CURDATE() BETWEEN pr.start_date AND pr.end_date
 WHERE ps.is_active = 1 AND p.is_active = 1;
 
--- View بۆ ڕاپۆرتی فرۆشتن و قازانج
 CREATE VIEW vw_sales_report AS
 SELECT
     o.id AS order_id,
@@ -390,3 +336,18 @@ FROM order_items oi
 INNER JOIN orders o ON o.id = oi.order_id
 INNER JOIN products p ON p.id = oi.product_id
 LEFT JOIN promotions pr ON pr.id = oi.promotion_id;
+
+-- Seeds (optional)
+INSERT INTO users (username, email, password, phone, role, is_active)
+VALUES ('admin', 'admin@medlan.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '07501234567', 'admin', 1);
+
+INSERT INTO colors (name, hexa_number) VALUES
+('سوور', '#FF0000'),
+('شین', '#0000FF'),
+('ڕەش', '#000000'),
+('سپی', '#FFFFFF'),
+('سەوز', '#00FF00'),
+('زەرد', '#FFFF00');
+
+INSERT INTO sizes (name) VALUES
+('Small'), ('Medium'), ('Large'), ('X-Large'), ('XX-Large');

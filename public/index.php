@@ -11,10 +11,10 @@ require_once __DIR__ . '/../routes/web.php';
 $method = $_SERVER['REQUEST_METHOD'];
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-// Remove base path if exists
-$base_path = '/medlan-backend/public';
-if (strpos($path, $base_path) === 0) {
-    $path = substr($path, strlen($base_path));
+// Remove base path only if script dir ends with /public (local dev)
+$scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/');
+if ($scriptDir && basename($scriptDir) === 'public' && strpos($path, $scriptDir) === 0) {
+    $path = substr($path, strlen($scriptDir));
 }
 
 $path = trim($path, '/');
