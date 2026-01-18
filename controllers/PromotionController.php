@@ -46,7 +46,7 @@ class PromotionController
                 ps.spec_value,
                 ps.price,
                 ps.stock,
-                ps.weight,
+                ps.gender,
                 ps.color_id,
                 ps.size_id,
                 ps.is_active,

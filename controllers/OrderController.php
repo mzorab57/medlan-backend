@@ -1,6 +1,58 @@
 <?php
 class OrderController
 {
+    private function getDeliveryThreshold(): float
+    {
+        return 35000.0;
+    }
+
+    private function findCityIdFromAddress(string $address): ?int
+    {
+        global $conn;
+        $a = strtolower($address);
+        $st = $conn->prepare('SELECT id, city_key, name FROM delivery_cities WHERE is_active = 1');
+        $st->execute();
+        $res = $st->get_result();
+        while ($r = $res->fetch_assoc()) {
+            $key = strtolower($r['city_key'] ?? '');
+            $name = strtolower($r['name'] ?? '');
+            if ($key && strpos($a, $key) !== false) { return (int)$r['id']; }
+            if ($name && strpos($a, $name) !== false) { return (int)$r['id']; }
+        }
+        return null;
+    }
+
+    private function ensureDeliveryExpense(int $orderId): void
+    {
+        global $conn;
+        $st = $conn->prepare('SELECT delivery_paid_by, delivery_fee, delivery_city_id FROM orders WHERE id = ?');
+        $st->bind_param('i', $orderId);
+        $st->execute();
+        $o = $st->get_result()->fetch_assoc();
+        if (!$o) { return; }
+        if (($o['delivery_paid_by'] ?? '') !== 'medlan') { return; }
+        $fee = isset($o['delivery_fee']) ? (float)$o['delivery_fee'] : 0.0;
+        if ($fee <= 0) { return; }
+        $exists = $conn->prepare("SELECT id FROM expenses WHERE category = 'delivery' AND order_id = ? LIMIT 1");
+        $exists->bind_param('i', $orderId);
+        $exists->execute();
+        if ($exists->get_result()->fetch_assoc()) { return; }
+        $title = 'Delivery (Order #' . $orderId . ')';
+        $cat = 'delivery';
+        $note = 'order_id=' . $orderId . '; city_id=' . ($o['delivery_city_id'] ?? '');
+        $ins = $conn->prepare('INSERT INTO expenses (order_id, title, amount, category, note) VALUES (?, ?, ?, ?, ?)');
+        $ins->bind_param('isdss', $orderId, $title, $fee, $cat, $note);
+        $ins->execute();
+    }
+
+    private function deleteDeliveryExpense(int $orderId): void
+    {
+        global $conn;
+        $st = $conn->prepare("DELETE FROM expenses WHERE category = 'delivery' AND order_id = ?");
+        $st->bind_param('i', $orderId);
+        $st->execute();
+    }
+
     public function create(): void
     {
         global $conn;
@@ -74,8 +126,9 @@ class OrderController
         try {
             $zero = 0.0;
             $status = 'pending';
-            $ins = $conn->prepare('INSERT INTO orders (customer_name, phone_number, address, total_price, status, order_source) VALUES (?, ?, ?, ?, ?, ?)');
-            $ins->bind_param('sssdss', $customer_name, $phone_number, $address, $zero, $status, $order_source);
+            $createdBy = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+            $ins = $conn->prepare('INSERT INTO orders (customer_name, phone_number, address, total_price, status, order_source, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            $ins->bind_param('sssdssi', $customer_name, $phone_number, $address, $zero, $status, $order_source, $createdBy);
             $ins->execute();
             $orderId = (int)$conn->insert_id;
             $total = 0.0;
@@ -125,8 +178,35 @@ class OrderController
                 $upd->bind_param('ii', $qty, $specId);
                 $upd->execute();
             }
-            $uord = $conn->prepare('UPDATE orders SET total_price = ? WHERE id = ?');
-            $uord->bind_param('di', $total, $orderId);
+            $threshold = $this->getDeliveryThreshold();
+            $reqPaidBy = isset($d['delivery_paid_by']) ? sanitize($d['delivery_paid_by']) : null;
+            $reqPaidBy = $reqPaidBy ? strtolower($reqPaidBy) : null;
+            if (!in_array($reqPaidBy, ['client','medlan'], true)) { $reqPaidBy = null; }
+            $reqCityId = isset($d['delivery_city_id']) ? (int)$d['delivery_city_id'] : null;
+            $paidBy = 'client';
+            if ($total >= $threshold) {
+                if ($createdBy !== null) {
+                    $paidBy = ($reqPaidBy === 'client') ? 'client' : 'medlan';
+                } else {
+                    $paidBy = 'medlan';
+                }
+            }
+            $cityId = $reqCityId ?: $this->findCityIdFromAddress($address);
+            $deliveryFee = null;
+            if ($paidBy === 'medlan') {
+                if (!$cityId) {
+                    if ($createdBy !== null) { throw new Exception('delivery_city_id required'); }
+                } else {
+                    $cst = $conn->prepare('SELECT fee FROM delivery_cities WHERE id = ? AND is_active = 1');
+                    $cst->bind_param('i', $cityId);
+                    $cst->execute();
+                    $cr = $cst->get_result()->fetch_assoc();
+                    if (!$cr) { throw new Exception('delivery city not found'); }
+                    $deliveryFee = (float)$cr['fee'];
+                }
+            }
+            $uord = $conn->prepare('UPDATE orders SET total_price = ?, delivery_city_id = ?, delivery_fee = ?, delivery_paid_by = ? WHERE id = ?');
+            $uord->bind_param('didsi', $total, $cityId, $deliveryFee, $paidBy, $orderId);
             $uord->execute();
             $conn->commit();
             jsonResponse(true, 'Created', ['id' => $orderId, 'total_price' => $total], 201);
@@ -147,7 +227,7 @@ class OrderController
         if ($status !== null) { $where[] = 'status = ?'; $types .= 's'; $params[] = sanitize($status); }
         if ($source !== null) { $where[] = 'order_source = ?'; $types .= 's'; $params[] = sanitize($source); }
         $w = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
-        $sql = "SELECT id, customer_name, phone_number, total_price, status, order_source, created_at FROM orders $w ORDER BY id DESC LIMIT 100";
+        $sql = "SELECT id, customer_name, phone_number, total_price, status, order_source, delivery_city_id, delivery_fee, delivery_paid_by, created_by_user_id, created_at FROM orders $w ORDER BY id DESC LIMIT 100";
         $st = $conn->prepare($sql);
         if ($types !== '') {
             $st->bind_param($types, ...$params);
@@ -163,7 +243,7 @@ class OrderController
     {
         global $conn;
         $oid = (int)$id;
-        $ord = $conn->prepare('SELECT * FROM orders WHERE id = ?');
+        $ord = $conn->prepare('SELECT o.*, dc.name AS delivery_city_name, dc.city_key AS delivery_city_key FROM orders o LEFT JOIN delivery_cities dc ON dc.id = o.delivery_city_id WHERE o.id = ?');
         $ord->bind_param('i', $oid);
         $ord->execute();
         $o = $ord->get_result()->fetch_assoc();
@@ -194,28 +274,40 @@ class OrderController
             jsonResponse(false, 'status required', null, 422);
             return;
         }
-        $st = $conn->prepare('UPDATE orders SET status = ? WHERE id = ?');
-        $st->bind_param('si', $status, $oid);
-        $st->execute();
-        if ($old && !in_array($old['status'], ['cancelled','returned'], true) && in_array($status, ['cancelled','returned'], true)) {
-            $it = $conn->prepare('SELECT id, product_spec_id, quantity FROM order_items WHERE order_id = ?');
-            $it->bind_param('i', $oid);
-            $it->execute();
-            $res = $it->get_result();
-            while ($r = $res->fetch_assoc()) {
-                $specId = (int)$r['product_spec_id'];
-                $qty = (int)$r['quantity'];
-                $type = 'adjustment';
-                $desc = $status === 'returned' ? 'order return' : 'order cancel';
-                $sm = $conn->prepare('INSERT INTO stock_movements (product_spec_id, type, quantity, order_item_id, description) VALUES (?, ?, ?, ?, ?)');
-                $orderItemIdRef = (int)$r['id'];
-                $sm->bind_param('isiss', $specId, $type, $qty, $orderItemIdRef, $desc);
-                $sm->execute();
-                $upd = $conn->prepare('UPDATE product_specifications SET stock = stock + ? WHERE id = ?');
-                $upd->bind_param('ii', $qty, $specId);
-                $upd->execute();
+        $conn->begin_transaction();
+        try {
+            $st = $conn->prepare('UPDATE orders SET status = ? WHERE id = ?');
+            $st->bind_param('si', $status, $oid);
+            $st->execute();
+            if ($old && !in_array($old['status'], ['cancelled','returned'], true) && in_array($status, ['cancelled','returned'], true)) {
+                $it = $conn->prepare('SELECT id, product_spec_id, quantity FROM order_items WHERE order_id = ?');
+                $it->bind_param('i', $oid);
+                $it->execute();
+                $res = $it->get_result();
+                while ($r = $res->fetch_assoc()) {
+                    $specId = (int)$r['product_spec_id'];
+                    $qty = (int)$r['quantity'];
+                    $type = 'adjustment';
+                    $desc = $status === 'returned' ? 'order return' : 'order cancel';
+                    $sm = $conn->prepare('INSERT INTO stock_movements (product_spec_id, type, quantity, order_item_id, description) VALUES (?, ?, ?, ?, ?)');
+                    $orderItemIdRef = (int)$r['id'];
+                    $sm->bind_param('isiss', $specId, $type, $qty, $orderItemIdRef, $desc);
+                    $sm->execute();
+                    $upd = $conn->prepare('UPDATE product_specifications SET stock = stock + ? WHERE id = ?');
+                    $upd->bind_param('ii', $qty, $specId);
+                    $upd->execute();
+                }
             }
+            if ($status === 'completed') {
+                $this->ensureDeliveryExpense($oid);
+            } elseif ($status === 'returned') {
+                $this->deleteDeliveryExpense($oid);
+            }
+            $conn->commit();
+            jsonResponse(true, 'Updated', ['updated' => true]);
+        } catch (Throwable $e) {
+            $conn->rollback();
+            jsonResponse(false, 'Update failed', ['detail' => $e->getMessage()], 400);
         }
-        jsonResponse(true, 'Updated', ['updated' => true]);
     }
 }

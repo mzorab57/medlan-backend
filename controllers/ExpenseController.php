@@ -7,6 +7,7 @@ class ExpenseController
         $from = isset($_GET['from']) ? sanitize($_GET['from']) : null;
         $to = isset($_GET['to']) ? sanitize($_GET['to']) : null;
         $category = isset($_GET['category']) ? sanitize($_GET['category']) : null;
+        $order_id = isset($_GET['order_id']) ? (int)$_GET['order_id'] : null;
         $where = [];
         $types = '';
         $params = [];
@@ -14,8 +15,9 @@ class ExpenseController
         elseif ($from) { $where[] = 'DATE(created_at) >= ?'; $types .= 's'; $params[] = $from; }
         elseif ($to) { $where[] = 'DATE(created_at) <= ?'; $types .= 's'; $params[] = $to; }
         if ($category) { $where[] = 'category = ?'; $types .= 's'; $params[] = $category; }
+        if ($order_id) { $where[] = 'order_id = ?'; $types .= 'i'; $params[] = $order_id; }
         $w = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
-        $sql = "SELECT id, title, amount, category, note, created_at FROM expenses $w ORDER BY id DESC LIMIT 500";
+        $sql = "SELECT id, order_id, title, amount, category, note, created_at FROM expenses $w ORDER BY id DESC LIMIT 500";
         $st = $conn->prepare($sql);
         if ($types !== '') { $st->bind_param($types, ...$params); }
         $st->execute();
@@ -29,6 +31,7 @@ class ExpenseController
     {
         global $conn;
         $d = getJsonInput();
+        $order_id = isset($d['order_id']) ? (int)$d['order_id'] : null;
         $title = sanitize($d['title'] ?? '');
         $amount = isset($d['amount']) ? (float)$d['amount'] : 0.0;
         $category = sanitize($d['category'] ?? 'general');
@@ -39,11 +42,11 @@ class ExpenseController
             return;
         }
         if ($date) {
-            $st = $conn->prepare('INSERT INTO expenses (title, amount, category, note, created_at) VALUES (?, ?, ?, ?, ?)');
-            $st->bind_param('sdsss', $title, $amount, $category, $note, $date);
+            $st = $conn->prepare('INSERT INTO expenses (order_id, title, amount, category, note, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+            $st->bind_param('isdsss', $order_id, $title, $amount, $category, $note, $date);
         } else {
-            $st = $conn->prepare('INSERT INTO expenses (title, amount, category, note) VALUES (?, ?, ?, ?)');
-            $st->bind_param('sdss', $title, $amount, $category, $note);
+            $st = $conn->prepare('INSERT INTO expenses (order_id, title, amount, category, note) VALUES (?, ?, ?, ?, ?)');
+            $st->bind_param('isdss', $order_id, $title, $amount, $category, $note);
         }
         $st->execute();
         jsonResponse(true, 'Created', ['id' => (int)$conn->insert_id], 201);
@@ -65,6 +68,7 @@ class ExpenseController
         $types = '';
         $params = [];
         $map = [
+            'order_id' => 'i',
             'title' => 's',
             'amount' => 'd',
             'category' => 's',
@@ -76,6 +80,7 @@ class ExpenseController
                 $fields[] = "$key = ?";
                 $types .= $t;
                 if ($t === 's') $params[] = sanitize((string)$d[$key]);
+                elseif ($t === 'i') $params[] = (int)$d[$key];
                 else $params[] = (float)$d[$key];
             }
         }
@@ -117,4 +122,3 @@ class ExpenseController
         jsonResponse(true, 'OK', ['data' => $rows]);
     }
 }
-

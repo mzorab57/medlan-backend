@@ -284,6 +284,35 @@ function handle_api_route(array $segments, string $method): void
                     jsonResponse(false, 'Method not allowed', null, 405);
                     return;
             }
+            case 'delivery-cities':
+            $controller = new DeliveryCityController();
+            $id = $_GET['id'] ?? null;
+            switch ($method) {
+                case 'GET':
+                    $controller->index();
+                    return;
+                case 'POST':
+                    $controller->store();
+                    return;
+                case 'PUT':
+                case 'PATCH':
+                    if ($id !== null) {
+                        $controller->update($id);
+                    } else {
+                        jsonResponse(false, 'ID is required', null, 400);
+                    }
+                    return;
+                case 'DELETE':
+                    if ($id !== null) {
+                        $controller->destroy($id);
+                    } else {
+                        jsonResponse(false, 'ID is required', null, 400);
+                    }
+                    return;
+                default:
+                    jsonResponse(false, 'Method not allowed', null, 405);
+                    return;
+            }
         case 'orders':
             $controller = new OrderController();
             $id = $_GET['id'] ?? null;
