@@ -53,6 +53,49 @@ class OrderController
         $st->execute();
     }
 
+    private function hasColumn(string $table, string $column): bool
+    {
+        global $conn;
+        $t = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+        $c = preg_replace('/[^a-zA-Z0-9_]/', '', $column);
+        if ($t === '' || $c === '') { return false; }
+        $rs = $conn->query("SHOW COLUMNS FROM `$t` LIKE '$c'");
+        if (!$rs) { return false; }
+        return (bool)$rs->fetch_assoc();
+    }
+
+    private function ensureDiscountExpense(int $orderId, float $amount): void
+    {
+        global $conn;
+        if (!$this->hasColumn('expenses', 'order_id')) { return; }
+        $title = 'Discount (Order #' . $orderId . ')';
+        $cat = 'discount';
+        $note = 'order_id=' . $orderId;
+        $exists = $conn->prepare("SELECT id FROM expenses WHERE category = 'discount' AND order_id = ? LIMIT 1");
+        $exists->bind_param('i', $orderId);
+        $exists->execute();
+        $row = $exists->get_result()->fetch_assoc();
+        if ($row && isset($row['id'])) {
+            $eid = (int)$row['id'];
+            $up = $conn->prepare('UPDATE expenses SET title = ?, amount = ?, category = ?, note = ? WHERE id = ?');
+            $up->bind_param('sdssi', $title, $amount, $cat, $note, $eid);
+            $up->execute();
+            return;
+        }
+        $ins = $conn->prepare('INSERT INTO expenses (order_id, title, amount, category, note) VALUES (?, ?, ?, ?, ?)');
+        $ins->bind_param('isdss', $orderId, $title, $amount, $cat, $note);
+        $ins->execute();
+    }
+
+    private function deleteDiscountExpense(int $orderId): void
+    {
+        global $conn;
+        if (!$this->hasColumn('expenses', 'order_id')) { return; }
+        $st = $conn->prepare("DELETE FROM expenses WHERE category = 'discount' AND order_id = ?");
+        $st->bind_param('i', $orderId);
+        $st->execute();
+    }
+
     public function create(): void
     {
         global $conn;
@@ -259,6 +302,84 @@ class OrderController
         while ($r = $ri->fetch_assoc()) { $rows[] = $r; }
         jsonResponse(true, 'OK', ['order' => $o, 'items' => $rows]);
     }
+
+    public function updateDiscount($id): void
+    {
+        global $conn;
+        $oid = (int)$id;
+        if (!$this->hasColumn('orders', 'order_discount')) {
+            jsonResponse(false, 'Missing DB column orders.order_discount', null, 500);
+            return;
+        }
+        if (!$this->hasColumn('expenses', 'order_id')) {
+            jsonResponse(false, 'Missing DB column expenses.order_id', null, 500);
+            return;
+        }
+        $stRow = $conn->prepare('SELECT status FROM orders WHERE id = ?');
+        $stRow->bind_param('i', $oid);
+        $stRow->execute();
+        $old = $stRow->get_result()->fetch_assoc();
+        if (!$old) {
+            jsonResponse(false, 'Not Found', null, 404);
+            return;
+        }
+        $status = strtolower((string)($old['status'] ?? ''));
+        if (!in_array($status, ['pending','processing','shipped'], true)) {
+            jsonResponse(false, 'Discount can only be changed for pending/processing/shipped', null, 409);
+            return;
+        }
+        $d = getJsonInput();
+        $discount = isset($d['order_discount']) ? (float)$d['order_discount'] : (isset($d['discount']) ? (float)$d['discount'] : 0.0);
+        if ($discount < 0) {
+            jsonResponse(false, 'Invalid discount', null, 422);
+            return;
+        }
+        $items = $conn->prepare('SELECT quantity, price, cost FROM order_items WHERE order_id = ?');
+        $items->bind_param('i', $oid);
+        $items->execute();
+        $res = $items->get_result();
+        $subtotal = 0.0;
+        $costTotal = 0.0;
+        while ($r = $res->fetch_assoc()) {
+            $qty = (int)($r['quantity'] ?? 0);
+            $subtotal += (float)($r['price'] ?? 0) * $qty;
+            $costTotal += (float)($r['cost'] ?? 0) * $qty;
+        }
+        if ($subtotal <= 0) {
+            jsonResponse(false, 'No items', null, 422);
+            return;
+        }
+        $grossProfit = $subtotal - $costTotal;
+        $maxDiscount = $grossProfit > 0 ? $grossProfit : 0.0;
+        if ($discount > $maxDiscount) {
+            jsonResponse(false, 'Discount exceeds profit', ['max_discount' => $maxDiscount], 422);
+            return;
+        }
+        $newTotal = $subtotal - $discount;
+        $conn->begin_transaction();
+        try {
+            $up = $conn->prepare('UPDATE orders SET order_discount = ?, total_price = ? WHERE id = ?');
+            $up->bind_param('ddi', $discount, $newTotal, $oid);
+            $up->execute();
+            if ($discount > 0) {
+                $this->ensureDiscountExpense($oid, $discount);
+            } else {
+                $this->deleteDiscountExpense($oid);
+            }
+            $conn->commit();
+            jsonResponse(true, 'Updated', [
+                'order_id' => $oid,
+                'subtotal' => $subtotal,
+                'discount' => $discount,
+                'total_price' => $newTotal,
+                'gross_profit' => $grossProfit,
+                'net_profit' => $grossProfit - $discount,
+            ]);
+        } catch (Throwable $e) {
+            $conn->rollback();
+            jsonResponse(false, 'Update failed', ['detail' => $e->getMessage()], 400);
+        }
+    }
     
     public function updateStatus($id): void
     {
@@ -299,9 +420,41 @@ class OrderController
                 }
             }
             if ($status === 'completed') {
+                if (array_key_exists('order_discount', $d) || array_key_exists('discount', $d)) {
+                    if (!$this->hasColumn('orders', 'order_discount')) { throw new Exception('Missing DB column orders.order_discount'); }
+                    if (!$this->hasColumn('expenses', 'order_id')) { throw new Exception('Missing DB column expenses.order_id'); }
+                    $discount = array_key_exists('order_discount', $d) ? (float)$d['order_discount'] : (float)($d['discount'] ?? 0);
+                    if ($discount < 0) { throw new Exception('Invalid discount'); }
+                    $items = $conn->prepare('SELECT quantity, price, cost FROM order_items WHERE order_id = ?');
+                    $items->bind_param('i', $oid);
+                    $items->execute();
+                    $res = $items->get_result();
+                    $subtotal = 0.0;
+                    $costTotal = 0.0;
+                    while ($r = $res->fetch_assoc()) {
+                        $qty = (int)($r['quantity'] ?? 0);
+                        $subtotal += (float)($r['price'] ?? 0) * $qty;
+                        $costTotal += (float)($r['cost'] ?? 0) * $qty;
+                    }
+                    $grossProfit = $subtotal - $costTotal;
+                    $maxDiscount = $grossProfit > 0 ? $grossProfit : 0.0;
+                    if ($discount > $maxDiscount) { throw new Exception('Discount exceeds profit'); }
+                    $newTotal = $subtotal - $discount;
+                    $up = $conn->prepare('UPDATE orders SET order_discount = ?, total_price = ? WHERE id = ?');
+                    $up->bind_param('ddi', $discount, $newTotal, $oid);
+                    $up->execute();
+                    if ($discount > 0) {
+                        $this->ensureDiscountExpense($oid, $discount);
+                    } else {
+                        $this->deleteDiscountExpense($oid);
+                    }
+                }
                 $this->ensureDeliveryExpense($oid);
             } elseif ($status === 'returned') {
                 $this->deleteDeliveryExpense($oid);
+                $this->deleteDiscountExpense($oid);
+            } elseif ($status === 'cancelled') {
+                $this->deleteDiscountExpense($oid);
             }
             $conn->commit();
             jsonResponse(true, 'Updated', ['updated' => true]);

@@ -328,6 +328,18 @@ function handle_api_route(array $segments, string $method): void
                         return;
                 }
             }
+            if (isset($segments[2]) && $segments[2] === 'discount') {
+                if ($id === null) { jsonResponse(false, 'ID is required', null, 400); return; }
+                switch ($method) {
+                    case 'PUT':
+                    case 'PATCH':
+                        $controller->updateDiscount($id);
+                        return;
+                    default:
+                        jsonResponse(false, 'Method not allowed', null, 405);
+                        return;
+                }
+            }
             switch ($method) {
                 case 'GET':
                     if ($id !== null) {
