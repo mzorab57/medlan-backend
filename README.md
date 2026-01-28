@@ -43,24 +43,6 @@ medlan-backend/
 │   ├── SizeController.php
 │   └── DashboardController.php
 │
-├── models/
-│   ├── Category.php
-│   ├── Subcategory.php
-│   ├── Brand.php
-│   ├── Product.php
-│   ├── ProductSpecification.php
-│   ├── ProductImage.php
-│   ├── Promotion.php
-│   ├── PromotionItem.php
-│   ├── Cart.php
-│   ├── CartItem.php
-│   ├── Order.php
-│   ├── OrderItem.php
-│   ├── StockMovement.php
-│   ├── Feedback.php
-│   ├── Color.php
-│   ├── Size.php
-│   └── User.php
 │
 ├── routes/
 │   ├── api.php
@@ -89,9 +71,6 @@ medlan-backend/
 │   ├── brands/
 │   └── temp/
 │
-├── logs/
-│   ├── error.log
-│   └── access.log
 │
 ├── public/
 │   └── index.php

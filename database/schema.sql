@@ -214,6 +214,7 @@ CREATE TABLE orders (
     phone_number VARCHAR(20) NOT NULL,
     address TEXT,
     total_price DECIMAL(12,2) NOT NULL,
+    order_discount DECIMAL(12,2) NOT NULL DEFAULT 0;
     status ENUM('pending', 'processing', 'shipped', 'completed', 'cancelled', 'returned') DEFAULT 'pending',
     order_source ENUM('website', 'whatsapp', 'instagram', 'manual') DEFAULT 'website' COMMENT 'سەرچاوەی داواکاری',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

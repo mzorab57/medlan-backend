@@ -195,12 +195,24 @@ class OrderController
                 $view->bind_param('i', $specId);
                 $view->execute();
                 $v = $view->get_result()->fetch_assoc();
-                $finalPrice = isset($v['final_price']) ? (float)$v['final_price'] : (float)$r['spec_price'];
                 $origPrice = (float)$r['spec_price'];
-                $discountAmount = isset($v['discount_amount']) ? (float)$v['discount_amount'] : 0.0;
                 $cost = (float)$r['cost'];
                 $promoId = isset($v['promotion_id']) ? (int)$v['promotion_id'] : null;
                 $productId = (int)$r['product_id'];
+                $promoPrice = isset($v['final_price']) ? (float)$v['final_price'] : (float)$r['spec_price'];
+                $finalPrice = $promoPrice;
+                $discountAmount = isset($v['discount_amount']) ? (float)$v['discount_amount'] : max(0.0, $origPrice - $finalPrice);
+                $unitPrice = null;
+                if (array_key_exists('unit_price', $it) && $it['unit_price'] !== null && $it['unit_price'] !== '') {
+                    $unitPrice = (float)$it['unit_price'];
+                }
+                if ($createdBy !== null && $unitPrice !== null) {
+                    if ($unitPrice < 0) { throw new Exception('invalid unit_price'); }
+                    if ($unitPrice < $cost) { throw new Exception('unit_price below purchase price'); }
+                    if ($unitPrice > $promoPrice) { throw new Exception('unit_price above promo price'); }
+                    $finalPrice = $unitPrice;
+                    $discountAmount = max(0.0, $origPrice - $finalPrice);
+                }
                 if ($promoId === null) {
                     $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)');
                     $oi->bind_param('iiiidddd', $orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount);
@@ -374,6 +386,100 @@ class OrderController
                 'total_price' => $newTotal,
                 'gross_profit' => $grossProfit,
                 'net_profit' => $grossProfit - $discount,
+            ]);
+        } catch (Throwable $e) {
+            $conn->rollback();
+            jsonResponse(false, 'Update failed', ['detail' => $e->getMessage()], 400);
+        }
+    }
+
+    public function updateItemPrice($id): void
+    {
+        AuthMiddleware::requireAuth();
+        global $conn;
+        $orderItemId = (int)$id;
+        $d = getJsonInput();
+        $unitPrice = null;
+        if (array_key_exists('unit_price', $d)) { $unitPrice = (float)$d['unit_price']; }
+        elseif (array_key_exists('price', $d)) { $unitPrice = (float)$d['price']; }
+        if ($unitPrice === null || $unitPrice < 0) {
+            jsonResponse(false, 'Invalid unit_price', null, 422);
+            return;
+        }
+        $st = $conn->prepare('SELECT oi.id, oi.order_id, oi.product_spec_id, oi.quantity, oi.price, oi.original_price, oi.cost, o.status, o.created_by_user_id, o.order_discount FROM order_items oi INNER JOIN orders o ON o.id = oi.order_id WHERE oi.id = ?');
+        $st->bind_param('i', $orderItemId);
+        $st->execute();
+        $row = $st->get_result()->fetch_assoc();
+        if (!$row) {
+            jsonResponse(false, 'Not Found', null, 404);
+            return;
+        }
+        $status = strtolower((string)($row['status'] ?? ''));
+        if (!in_array($status, ['pending','processing','shipped'], true)) {
+            jsonResponse(false, 'Item price can only be changed for pending/processing/shipped', null, 409);
+            return;
+        }
+        if (($row['created_by_user_id'] ?? null) === null) {
+            jsonResponse(false, 'Not allowed', null, 403);
+            return;
+        }
+        $specId = (int)($row['product_spec_id'] ?? 0);
+        if ($specId <= 0) {
+            jsonResponse(false, 'Invalid spec', null, 422);
+            return;
+        }
+        $minPrice = (float)($row['cost'] ?? 0);
+        $origPrice = (float)($row['original_price'] ?? 0);
+        $promoPrice = $origPrice;
+        $sp = $conn->prepare('SELECT ps.price AS spec_price FROM product_specifications ps WHERE ps.id = ?');
+        $sp->bind_param('i', $specId);
+        $sp->execute();
+        $spr = $sp->get_result()->fetch_assoc();
+        if ($spr && isset($spr['spec_price'])) {
+            $promoPrice = (float)$spr['spec_price'];
+        }
+        $vw = $conn->prepare('SELECT final_price FROM vw_product_prices WHERE spec_id = ?');
+        $vw->bind_param('i', $specId);
+        $vw->execute();
+        $vwr = $vw->get_result()->fetch_assoc();
+        if ($vwr && isset($vwr['final_price']) && $vwr['final_price'] !== null && $vwr['final_price'] !== '') {
+            $promoPrice = (float)$vwr['final_price'];
+        }
+        if ($unitPrice < $minPrice) {
+            jsonResponse(false, 'unit_price below purchase price', ['min' => $minPrice], 422);
+            return;
+        }
+        if ($unitPrice > $promoPrice) {
+            jsonResponse(false, 'unit_price above variant price', ['max' => $promoPrice], 422);
+            return;
+        }
+        $discountAmount = max(0.0, $origPrice - $unitPrice);
+        $conn->begin_transaction();
+        try {
+            $up = $conn->prepare('UPDATE order_items SET price = ?, discount_amount = ? WHERE id = ?');
+            $up->bind_param('ddi', $unitPrice, $discountAmount, $orderItemId);
+            $up->execute();
+            $sum = $conn->prepare('SELECT COALESCE(SUM(price * quantity),0) AS subtotal FROM order_items WHERE order_id = ?');
+            $orderId = (int)$row['order_id'];
+            $sum->bind_param('i', $orderId);
+            $sum->execute();
+            $sr = $sum->get_result()->fetch_assoc();
+            $subtotal = (float)($sr['subtotal'] ?? 0);
+            $orderDiscount = $this->hasColumn('orders', 'order_discount') ? (float)($row['order_discount'] ?? 0) : 0.0;
+            $newTotal = $subtotal - $orderDiscount;
+            if ($newTotal < 0) { $newTotal = 0.0; }
+            $uo = $conn->prepare('UPDATE orders SET total_price = ? WHERE id = ?');
+            $uo->bind_param('di', $newTotal, $orderId);
+            $uo->execute();
+            $conn->commit();
+            jsonResponse(true, 'Updated', [
+                'order_id' => $orderId,
+                'order_item_id' => $orderItemId,
+                'unit_price' => $unitPrice,
+                'promo_price' => $promoPrice,
+                'purchase_price' => $minPrice,
+                'subtotal' => $subtotal,
+                'total_price' => $newTotal,
             ]);
         } catch (Throwable $e) {
             $conn->rollback();
