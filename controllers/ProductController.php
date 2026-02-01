@@ -115,7 +115,7 @@ class ProductController
             return;
         }
         $st = $conn->prepare('INSERT INTO product_specifications (product_id, sku_variant, spec_key, spec_value, image, price, purchase_price, stock, color_id, size_id, gender, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        $st->bind_param('isssssddiiisi', $pid, $sku, $spec_key, $spec_value, $image, $price, $purchase_price, $stock, $color_id, $size_id, $gender, $active);
+        $st->bind_param('issssddiiisi', $pid, $sku, $spec_key, $spec_value, $image, $price, $purchase_price, $stock, $color_id, $size_id, $gender, $active);
         if (!$st->execute()) {
             jsonResponse(false, 'Error', null, 500);
             return;
