@@ -486,6 +486,177 @@ class OrderController
             jsonResponse(false, 'Update failed', ['detail' => $e->getMessage()], 400);
         }
     }
+
+    public function addItem($id): void
+    {
+        AuthMiddleware::requireAuth();
+        global $conn;
+        $orderId = (int)$id;
+        $d = getJsonInput();
+        $specId = (int)($d['product_spec_id'] ?? 0);
+        $qty = max(1, (int)($d['quantity'] ?? 1));
+        $unitPrice = null;
+        if (array_key_exists('unit_price', $d) && $d['unit_price'] !== null && $d['unit_price'] !== '') {
+            $unitPrice = (float)$d['unit_price'];
+        }
+        if ($specId <= 0) {
+            jsonResponse(false, 'product_spec_id required', null, 422);
+            return;
+        }
+        if ($qty <= 0) {
+            jsonResponse(false, 'quantity required', null, 422);
+            return;
+        }
+        $o = $conn->prepare('SELECT id, status, created_by_user_id, order_discount FROM orders WHERE id = ?');
+        $o->bind_param('i', $orderId);
+        $o->execute();
+        $ord = $o->get_result()->fetch_assoc();
+        if (!$ord) {
+            jsonResponse(false, 'Not Found', null, 404);
+            return;
+        }
+        $status = strtolower((string)($ord['status'] ?? ''));
+        if (!in_array($status, ['pending','processing','shipped'], true)) {
+            jsonResponse(false, 'Items can only be changed for pending/processing/shipped', null, 409);
+            return;
+        }
+        if (($ord['created_by_user_id'] ?? null) === null) {
+            jsonResponse(false, 'Not allowed', null, 403);
+            return;
+        }
+        $row = $conn->prepare('SELECT ps.price AS spec_price, ps.product_id, ps.stock AS stock, COALESCE(ps.purchase_price, p.purchase_price) AS cost FROM product_specifications ps INNER JOIN products p ON p.id = ps.product_id WHERE ps.id = ?');
+        $row->bind_param('i', $specId);
+        $row->execute();
+        $r = $row->get_result()->fetch_assoc();
+        if (!$r) {
+            jsonResponse(false, 'spec not found', null, 404);
+            return;
+        }
+        if ((int)$r['stock'] < $qty) {
+            jsonResponse(false, 'insufficient stock', null, 409);
+            return;
+        }
+        $view = $conn->prepare('SELECT promotion_id, final_price, discount_amount FROM vw_product_prices WHERE spec_id = ?');
+        $view->bind_param('i', $specId);
+        $view->execute();
+        $v = $view->get_result()->fetch_assoc();
+        $origPrice = (float)$r['spec_price'];
+        $cost = (float)$r['cost'];
+        $promoId = isset($v['promotion_id']) ? (int)$v['promotion_id'] : null;
+        $productId = (int)$r['product_id'];
+        $promoPrice = isset($v['final_price']) ? (float)$v['final_price'] : (float)$r['spec_price'];
+        $finalPrice = $promoPrice;
+        $discountAmount = isset($v['discount_amount']) ? (float)$v['discount_amount'] : max(0.0, $origPrice - $finalPrice);
+        if ($unitPrice !== null) {
+            if ($unitPrice < 0) { jsonResponse(false, 'invalid unit_price', null, 422); return; }
+            if ($unitPrice < $cost) { jsonResponse(false, 'unit_price below purchase price', ['min' => $cost], 422); return; }
+            if ($unitPrice > $promoPrice) { jsonResponse(false, 'unit_price above variant price', ['max' => $promoPrice], 422); return; }
+            $finalPrice = $unitPrice;
+            $discountAmount = max(0.0, $origPrice - $finalPrice);
+        }
+        $conn->begin_transaction();
+        try {
+            if ($promoId === null) {
+                $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)');
+                $oi->bind_param('iiiidddd', $orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount);
+            } else {
+                $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                $oi->bind_param('iiiiddddi', $orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $promoId);
+            }
+            $oi->execute();
+            $orderItemId = (int)$conn->insert_id;
+            $sm = $conn->prepare('INSERT INTO stock_movements (product_spec_id, type, quantity, order_item_id, description) VALUES (?, ?, ?, ?, ?)');
+            $type = 'sale';
+            $desc = 'order item add';
+            $negQty = -$qty;
+            $sm->bind_param('isiss', $specId, $type, $negQty, $orderItemId, $desc);
+            $sm->execute();
+            $upd = $conn->prepare('UPDATE product_specifications SET stock = stock - ? WHERE id = ?');
+            $upd->bind_param('ii', $qty, $specId);
+            $upd->execute();
+            $sum = $conn->prepare('SELECT COALESCE(SUM(price * quantity),0) AS subtotal FROM order_items WHERE order_id = ?');
+            $sum->bind_param('i', $orderId);
+            $sum->execute();
+            $sr = $sum->get_result()->fetch_assoc();
+            $subtotal = (float)($sr['subtotal'] ?? 0);
+            $orderDiscount = $this->hasColumn('orders', 'order_discount') ? (float)($ord['order_discount'] ?? 0) : 0.0;
+            $newTotal = $subtotal - $orderDiscount;
+            if ($newTotal < 0) { $newTotal = 0.0; }
+            $uo = $conn->prepare('UPDATE orders SET total_price = ? WHERE id = ?');
+            $uo->bind_param('di', $newTotal, $orderId);
+            $uo->execute();
+            $conn->commit();
+            jsonResponse(true, 'Created', ['order_item_id' => $orderItemId, 'order_id' => $orderId, 'total_price' => $newTotal], 201);
+        } catch (Throwable $e) {
+            $conn->rollback();
+            jsonResponse(false, 'Create failed', ['detail' => $e->getMessage()], 400);
+        }
+    }
+
+    public function deleteItem($id): void
+    {
+        AuthMiddleware::requireAuth();
+        global $conn;
+        $orderItemId = (int)$id;
+        $st = $conn->prepare('SELECT oi.id, oi.order_id, oi.product_spec_id, oi.quantity, o.status, o.created_by_user_id, o.order_discount FROM order_items oi INNER JOIN orders o ON o.id = oi.order_id WHERE oi.id = ?');
+        $st->bind_param('i', $orderItemId);
+        $st->execute();
+        $row = $st->get_result()->fetch_assoc();
+        if (!$row) {
+            jsonResponse(false, 'Not Found', null, 404);
+            return;
+        }
+        $status = strtolower((string)($row['status'] ?? ''));
+        if (!in_array($status, ['pending','processing','shipped'], true)) {
+            jsonResponse(false, 'Items can only be changed for pending/processing/shipped', null, 409);
+            return;
+        }
+        if (($row['created_by_user_id'] ?? null) === null) {
+            jsonResponse(false, 'Not allowed', null, 403);
+            return;
+        }
+        $orderId = (int)$row['order_id'];
+        $cnt = $conn->prepare('SELECT COUNT(*) AS c FROM order_items WHERE order_id = ?');
+        $cnt->bind_param('i', $orderId);
+        $cnt->execute();
+        $cr = $cnt->get_result()->fetch_assoc();
+        if ((int)($cr['c'] ?? 0) <= 1) {
+            jsonResponse(false, 'Order must have at least one item', null, 409);
+            return;
+        }
+        $specId = (int)$row['product_spec_id'];
+        $qty = (int)$row['quantity'];
+        $conn->begin_transaction();
+        try {
+            $del = $conn->prepare('DELETE FROM order_items WHERE id = ?');
+            $del->bind_param('i', $orderItemId);
+            $del->execute();
+            $sm = $conn->prepare('INSERT INTO stock_movements (product_spec_id, type, quantity, description) VALUES (?, ?, ?, ?)');
+            $type = 'adjustment';
+            $desc = 'order item remove';
+            $sm->bind_param('isis', $specId, $type, $qty, $desc);
+            $sm->execute();
+            $upd = $conn->prepare('UPDATE product_specifications SET stock = stock + ? WHERE id = ?');
+            $upd->bind_param('ii', $qty, $specId);
+            $upd->execute();
+            $sum = $conn->prepare('SELECT COALESCE(SUM(price * quantity),0) AS subtotal FROM order_items WHERE order_id = ?');
+            $sum->bind_param('i', $orderId);
+            $sum->execute();
+            $sr = $sum->get_result()->fetch_assoc();
+            $subtotal = (float)($sr['subtotal'] ?? 0);
+            $orderDiscount = $this->hasColumn('orders', 'order_discount') ? (float)($row['order_discount'] ?? 0) : 0.0;
+            $newTotal = $subtotal - $orderDiscount;
+            if ($newTotal < 0) { $newTotal = 0.0; }
+            $uo = $conn->prepare('UPDATE orders SET total_price = ? WHERE id = ?');
+            $uo->bind_param('di', $newTotal, $orderId);
+            $uo->execute();
+            $conn->commit();
+            jsonResponse(true, 'Deleted', ['deleted' => true, 'order_id' => $orderId, 'total_price' => $newTotal]);
+        } catch (Throwable $e) {
+            $conn->rollback();
+            jsonResponse(false, 'Delete failed', ['detail' => $e->getMessage()], 400);
+        }
+    }
     
     public function updateStatus($id): void
     {

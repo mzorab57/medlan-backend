@@ -52,6 +52,28 @@ class DashboardController
         $counts['net_profit_today'] = $net1;
         $counts['net_profit_7d'] = $net7;
         $counts['net_profit_30d'] = $net30;
+
+        $inv = $conn->query("SELECT
+            COALESCE(COUNT(DISTINCT ps.product_id),0) AS products,
+            COALESCE(SUM(ps.stock),0) AS units,
+            COALESCE(SUM(ps.stock * COALESCE(ps.purchase_price, p.purchase_price, 0)),0) AS value_cost,
+            COALESCE(SUM(ps.stock * COALESCE(v.final_price, ps.price, p.base_price, 0)),0) AS value_sale
+            FROM product_specifications ps
+            INNER JOIN products p ON p.id = ps.product_id
+            LEFT JOIN vw_product_prices v ON v.spec_id = ps.id
+            WHERE ps.stock > 0 AND ps.is_active = 1 AND p.is_active = 1");
+        if ($inv) {
+            $r = $inv->fetch_assoc();
+            $counts['stock_products'] = (int)($r['products'] ?? 0);
+            $counts['stock_units'] = (int)($r['units'] ?? 0);
+            $counts['stock_value_cost'] = (float)($r['value_cost'] ?? 0);
+            $counts['stock_value_sale'] = (float)($r['value_sale'] ?? 0);
+        } else {
+            $counts['stock_products'] = 0;
+            $counts['stock_units'] = 0;
+            $counts['stock_value_cost'] = 0.0;
+            $counts['stock_value_sale'] = 0.0;
+        }
         jsonResponse(true, 'OK', ['summary' => $counts]);
     }
 

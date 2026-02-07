@@ -1,6 +1,29 @@
 <?php
 class ProductController
 {
+    public function backfillVariantPurchasePrice(): void
+    {
+        AuthMiddleware::requireAdmin();
+        global $conn;
+        $pid = isset($_GET['id']) ? (int)$_GET['id'] : null;
+        if ($pid !== null && $pid <= 0) { $pid = null; }
+        $where = $pid !== null ? 'AND ps.product_id = ?' : '';
+        $sql = "UPDATE product_specifications ps
+                INNER JOIN products p ON p.id = ps.product_id
+                SET ps.purchase_price = p.purchase_price
+                WHERE (ps.purchase_price IS NULL OR ps.purchase_price = 0)
+                  $where";
+        $st = $conn->prepare($sql);
+        if ($pid !== null) {
+            $st->bind_param('i', $pid);
+        }
+        if (!$st->execute()) {
+            jsonResponse(false, 'Backfill failed', null, 500);
+            return;
+        }
+        jsonResponse(true, 'OK', ['updated' => (int)$st->affected_rows]);
+    }
+
     public function index(): void
     {
         global $conn;

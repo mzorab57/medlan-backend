@@ -183,6 +183,37 @@ CREATE TABLE promotion_items (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ======================================
+-- داواکاری کڕین (Purchase Orders) - پێش گەیشتنی کاڵا بە کۆگا
+-- Purchase Orders (Stock In) - Track supplier orders before receiving stock
+-- ======================================
+
+CREATE TABLE purchase_orders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_name VARCHAR(255) NOT NULL,
+    status ENUM('draft','ordered','partial','received','cancelled') DEFAULT 'ordered',
+    total_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+    note TEXT,
+    created_by_user_id INT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE purchase_order_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_order_id INT NOT NULL,
+    product_id INT NOT NULL,
+    product_spec_id INT NOT NULL,
+    quantity INT NOT NULL,
+    received_quantity INT NOT NULL DEFAULT 0,
+    unit_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
+    FOREIGN KEY (product_spec_id) REFERENCES product_specifications(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ======================================
 -- خشتەکانی Cart و Orders
 -- ======================================
 
@@ -214,7 +245,7 @@ CREATE TABLE orders (
     phone_number VARCHAR(20) NOT NULL,
     address TEXT,
     total_price DECIMAL(12,2) NOT NULL,
-    order_discount DECIMAL(12,2) NOT NULL DEFAULT 0;
+    order_discount DECIMAL(12,2) NOT NULL DEFAULT 0,
     status ENUM('pending', 'processing', 'shipped', 'completed', 'cancelled', 'returned') DEFAULT 'pending',
     order_source ENUM('website', 'whatsapp', 'instagram', 'manual') DEFAULT 'website' COMMENT 'سەرچاوەی داواکاری',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -307,6 +338,11 @@ CREATE INDEX idx_promotions_active ON promotions(is_active);
 
 CREATE INDEX idx_promotion_items_spec ON promotion_items(product_spec_id);
 CREATE INDEX idx_promotion_items_promo ON promotion_items(promotion_id);
+
+CREATE INDEX idx_purchase_orders_status ON purchase_orders(status);
+CREATE INDEX idx_purchase_orders_created ON purchase_orders(created_at);
+CREATE INDEX idx_purchase_order_items_po ON purchase_order_items(purchase_order_id);
+CREATE INDEX idx_purchase_order_items_spec ON purchase_order_items(product_spec_id);
 
 -- ======================================
 -- Views بۆ ئاسانکاری لە Backend

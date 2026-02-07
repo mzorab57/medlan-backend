@@ -110,6 +110,17 @@ function handle_api_route(array $segments, string $method): void
         case 'products':
             $controller = new ProductController();
             $id = $_GET['id'] ?? null;
+            if (isset($segments[2]) && $segments[2] === 'backfill-variant-purchase') {
+                switch ($method) {
+                    case 'PUT':
+                    case 'PATCH':
+                        $controller->backfillVariantPurchasePrice();
+                        return;
+                    default:
+                        jsonResponse(false, 'Method not allowed', null, 405);
+                        return;
+                }
+            }
             if (isset($segments[3]) && $segments[3] === 'specs') {
                 $pid = isset($segments[2]) ? (int)$segments[2] : (isset($_GET['id']) ? (int)$_GET['id'] : null);
                 if ($pid === null) { jsonResponse(false, 'ID is required', null, 400); return; }
@@ -331,9 +342,15 @@ function handle_api_route(array $segments, string $method): void
             if (isset($segments[2]) && $segments[2] === 'items') {
                 if ($id === null) { jsonResponse(false, 'ID is required', null, 400); return; }
                 switch ($method) {
+                    case 'POST':
+                        $controller->addItem($id);
+                        return;
                     case 'PUT':
                     case 'PATCH':
                         $controller->updateItemPrice($id);
+                        return;
+                    case 'DELETE':
+                        $controller->deleteItem($id);
                         return;
                     default:
                         jsonResponse(false, 'Method not allowed', null, 405);
@@ -365,6 +382,56 @@ function handle_api_route(array $segments, string $method): void
                     return;
                 case 'DELETE':
                     jsonResponse(false, 'Method not allowed', null, 405);
+                    return;
+                default:
+                    jsonResponse(false, 'Method not allowed', null, 405);
+                    return;
+            }
+        case 'purchases':
+            $controller = new PurchaseController();
+            $id = $_GET['id'] ?? null;
+            if (isset($segments[2]) && $segments[2] === 'items') {
+                if ($id === null) { jsonResponse(false, 'ID is required', null, 400); return; }
+                switch ($method) {
+                    case 'POST':
+                        $controller->addItem($id);
+                        return;
+                    case 'PUT':
+                    case 'PATCH':
+                        $controller->updateItem($id);
+                        return;
+                    case 'DELETE':
+                        $controller->deleteItem($id);
+                        return;
+                    default:
+                        jsonResponse(false, 'Method not allowed', null, 405);
+                        return;
+                }
+            }
+            if (isset($segments[2]) && $segments[2] === 'receive') {
+                if ($id === null) { jsonResponse(false, 'ID is required', null, 400); return; }
+                switch ($method) {
+                    case 'PUT':
+                    case 'PATCH':
+                        $controller->receiveAll($id);
+                        return;
+                    default:
+                        jsonResponse(false, 'Method not allowed', null, 405);
+                        return;
+                }
+            }
+            switch ($method) {
+                case 'GET':
+                    if ($id !== null) $controller->show($id);
+                    else $controller->list();
+                    return;
+                case 'POST':
+                    $controller->create();
+                    return;
+                case 'PUT':
+                case 'PATCH':
+                    if ($id === null) { jsonResponse(false, 'ID is required', null, 400); return; }
+                    $controller->update($id);
                     return;
                 default:
                     jsonResponse(false, 'Method not allowed', null, 405);
