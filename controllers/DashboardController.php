@@ -3,6 +3,7 @@ class DashboardController
 {
     public function summary(): void
     {
+        $user = AuthMiddleware::requireAuth();
         global $conn;
         $counts = [];
         $q1 = $conn->query('SELECT COUNT(*) AS c FROM products');
@@ -15,12 +16,6 @@ class DashboardController
         $counts['orders_pending'] = $q4 ? (int)($q4->fetch_assoc()['c'] ?? 0) : 0;
         $q5 = $conn->query("SELECT COUNT(*) AS c FROM orders WHERE status = 'completed'");
         $counts['orders_completed'] = $q5 ? (int)($q5->fetch_assoc()['c'] ?? 0) : 0;
-        $q6 = $conn->query("SELECT COALESCE(SUM(price * quantity),0) AS r FROM order_items oi INNER JOIN orders o ON o.id = oi.order_id WHERE o.status = 'completed' AND DATE(o.created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
-        $counts['revenue_30d'] = $q6 ? (float)($q6->fetch_assoc()['r'] ?? 0) : 0.0;
-        $q6a = $conn->query("SELECT COALESCE(SUM(price * quantity),0) AS r FROM order_items oi INNER JOIN orders o ON o.id = oi.order_id WHERE o.status = 'completed' AND DATE(o.created_at) = CURDATE()");
-        $counts['revenue_today'] = $q6a ? (float)($q6a->fetch_assoc()['r'] ?? 0) : 0.0;
-        $q6b = $conn->query("SELECT COALESCE(SUM(price * quantity),0) AS r FROM order_items oi INNER JOIN orders o ON o.id = oi.order_id WHERE o.status = 'completed' AND DATE(o.created_at) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
-        $counts['revenue_7d'] = $q6b ? (float)($q6b->fetch_assoc()['r'] ?? 0) : 0.0;
         $q7 = $conn->query('SELECT COUNT(*) AS c FROM brands');
         $counts['brands'] = $q7 ? (int)($q7->fetch_assoc()['c'] ?? 0) : 0;
         $q8 = $conn->query('SELECT COUNT(*) AS c FROM users');
@@ -33,46 +28,58 @@ class DashboardController
         $counts['orders_cancelled'] = $q11 ? (int)($q11->fetch_assoc()['c'] ?? 0) : 0;
         $q12 = $conn->query("SELECT COUNT(*) AS c FROM orders WHERE status = 'returned'");
         $counts['orders_returned'] = $q12 ? (int)($q12->fetch_assoc()['c'] ?? 0) : 0;
-        $q13 = $conn->query("SELECT COALESCE(AVG(total_price),0) AS a FROM orders WHERE status = 'completed' AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
-        $counts['aov_30d'] = $q13 ? (float)($q13->fetch_assoc()['a'] ?? 0) : 0.0;
-        // Expenses
-        $e1 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) = CURDATE()");
-        $counts['expenses_today'] = $e1 ? (float)($e1->fetch_assoc()['t'] ?? 0) : 0.0;
-        $e7 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
-        $counts['expenses_7d'] = $e7 ? (float)($e7->fetch_assoc()['t'] ?? 0) : 0.0;
-        $e30 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
-        $counts['expenses_30d'] = $e30 ? (float)($e30->fetch_assoc()['t'] ?? 0) : 0.0;
-        // Profit after expenses (net) based on vw_sales_report total_profit
-        $p1 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) = CURDATE()");
-        $p7 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
-        $p30 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
-        $net1 = ($p1 ? (float)($p1->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_today'];
-        $net7 = ($p7 ? (float)($p7->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_7d'];
-        $net30 = ($p30 ? (float)($p30->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_30d'];
-        $counts['net_profit_today'] = $net1;
-        $counts['net_profit_7d'] = $net7;
-        $counts['net_profit_30d'] = $net30;
+        if (($user['role'] ?? '') === 'admin') {
+            $q6 = $conn->query("SELECT COALESCE(SUM(price * quantity),0) AS r FROM order_items oi INNER JOIN orders o ON o.id = oi.order_id WHERE o.status = 'completed' AND DATE(o.created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
+            $counts['revenue_30d'] = $q6 ? (float)($q6->fetch_assoc()['r'] ?? 0) : 0.0;
+            $q6a = $conn->query("SELECT COALESCE(SUM(price * quantity),0) AS r FROM order_items oi INNER JOIN orders o ON o.id = oi.order_id WHERE o.status = 'completed' AND DATE(o.created_at) = CURDATE()");
+            $counts['revenue_today'] = $q6a ? (float)($q6a->fetch_assoc()['r'] ?? 0) : 0.0;
+            $q6b = $conn->query("SELECT COALESCE(SUM(price * quantity),0) AS r FROM order_items oi INNER JOIN orders o ON o.id = oi.order_id WHERE o.status = 'completed' AND DATE(o.created_at) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
+            $counts['revenue_7d'] = $q6b ? (float)($q6b->fetch_assoc()['r'] ?? 0) : 0.0;
+
+            $q13 = $conn->query("SELECT COALESCE(AVG(total_price),0) AS a FROM orders WHERE status = 'completed' AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
+            $counts['aov_30d'] = $q13 ? (float)($q13->fetch_assoc()['a'] ?? 0) : 0.0;
+            $e1 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) = CURDATE()");
+            $counts['expenses_today'] = $e1 ? (float)($e1->fetch_assoc()['t'] ?? 0) : 0.0;
+            $e7 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
+            $counts['expenses_7d'] = $e7 ? (float)($e7->fetch_assoc()['t'] ?? 0) : 0.0;
+            $e30 = $conn->query("SELECT COALESCE(SUM(amount),0) AS t FROM expenses WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
+            $counts['expenses_30d'] = $e30 ? (float)($e30->fetch_assoc()['t'] ?? 0) : 0.0;
+            $p1 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) = CURDATE()");
+            $p7 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
+            $p30 = $conn->query("SELECT COALESCE(SUM(total_profit),0) AS p FROM vw_sales_report WHERE order_status = 'completed' AND DATE(order_date) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
+            $net1 = ($p1 ? (float)($p1->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_today'];
+            $net7 = ($p7 ? (float)($p7->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_7d'];
+            $net30 = ($p30 ? (float)($p30->fetch_assoc()['p'] ?? 0) : 0.0) - $counts['expenses_30d'];
+            $counts['net_profit_today'] = $net1;
+            $counts['net_profit_7d'] = $net7;
+            $counts['net_profit_30d'] = $net30;
+        }
 
         $inv = $conn->query("SELECT
             COALESCE(COUNT(DISTINCT ps.product_id),0) AS products,
-            COALESCE(SUM(ps.stock),0) AS units,
+            COALESCE(SUM(ps.stock),0) AS units" . (($user['role'] ?? '') === 'admin' ? ",
             COALESCE(SUM(ps.stock * COALESCE(ps.purchase_price, p.purchase_price, 0)),0) AS value_cost,
-            COALESCE(SUM(ps.stock * COALESCE(v.final_price, ps.price, p.base_price, 0)),0) AS value_sale
+            COALESCE(SUM(ps.stock * COALESCE(CASE WHEN pr.coupon_code IS NULL THEN v.final_price ELSE NULL END, ps.price, p.base_price, 0)),0) AS value_sale" : "") . "
             FROM product_specifications ps
             INNER JOIN products p ON p.id = ps.product_id
             LEFT JOIN vw_product_prices v ON v.spec_id = ps.id
+            LEFT JOIN promotions pr ON pr.id = v.promotion_id
             WHERE ps.stock > 0 AND ps.is_active = 1 AND p.is_active = 1");
         if ($inv) {
             $r = $inv->fetch_assoc();
             $counts['stock_products'] = (int)($r['products'] ?? 0);
             $counts['stock_units'] = (int)($r['units'] ?? 0);
-            $counts['stock_value_cost'] = (float)($r['value_cost'] ?? 0);
-            $counts['stock_value_sale'] = (float)($r['value_sale'] ?? 0);
+            if (($user['role'] ?? '') === 'admin') {
+                $counts['stock_value_cost'] = (float)($r['value_cost'] ?? 0);
+                $counts['stock_value_sale'] = (float)($r['value_sale'] ?? 0);
+            }
         } else {
             $counts['stock_products'] = 0;
             $counts['stock_units'] = 0;
-            $counts['stock_value_cost'] = 0.0;
-            $counts['stock_value_sale'] = 0.0;
+            if (($user['role'] ?? '') === 'admin') {
+                $counts['stock_value_cost'] = 0.0;
+                $counts['stock_value_sale'] = 0.0;
+            }
         }
         jsonResponse(true, 'OK', ['summary' => $counts]);
     }

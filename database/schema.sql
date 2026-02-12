@@ -160,9 +160,15 @@ CREATE TABLE product_spec_images (
 CREATE TABLE promotions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL COMMENT 'ناوی کامپەین، بۆ نموونە "Winter Sale 2025"',
+    coupon_code VARCHAR(50) UNIQUE DEFAULT NULL,
     description TEXT COMMENT 'وەسفی کامپەینەکە',
-    discount_type ENUM('percentage', 'fixed') NOT NULL COMMENT 'جۆری داشکاندن: سەدی یان نرخی ڕاستەوخۆ',
-    discount_value DECIMAL(10,2) NOT NULL COMMENT 'نرخی داشکاندن',
+    discount_type ENUM('percentage', 'fixed', 'campaign') NOT NULL COMMENT 'جۆری داشکاندن: سەدی یان نرخی ڕاستەوخۆ یان campaign',
+    discount_value DECIMAL(10,2) NOT NULL COMMENT 'نرخی داشکاندن (بۆ campaign دەتوانێت 0 بێت)',
+    usage_limit INT DEFAULT NULL COMMENT 'چەند جار دەتوانرێت بەکاربێت، NULL واتە بێ سنوور',
+    used_count INT DEFAULT 0 COMMENT 'تا ئێستا چەند جار بەکارهاتووە',
+    min_order_amount DECIMAL(10,2) DEFAULT 0.00 COMMENT 'کەمترین بڕی کڕین بۆ چالاکبوونی کۆدەکە',
+    display_limit INT DEFAULT NULL COMMENT 'چەند item پیشان بدرێت لە website (campaign)',
+    extra_pool_limit INT DEFAULT NULL COMMENT 'چەند item زیادە هەبێت بۆ گۆڕینەوە (campaign)',
     start_date DATE NOT NULL COMMENT 'بەرواری دەستپێکردن',
     end_date DATE NOT NULL COMMENT 'بەرواری کۆتایی',
     is_active TINYINT(1) DEFAULT 1 COMMENT 'چالاک یان ناچالاک',
@@ -176,11 +182,28 @@ CREATE TABLE promotion_items (
     id INT AUTO_INCREMENT PRIMARY KEY,
     promotion_id INT NOT NULL,
     product_spec_id INT NOT NULL COMMENT 'تایبەت بە variant دیاریکراو (ڕەنگ/سایز)',
+    override_price DECIMAL(10,2) DEFAULT NULL COMMENT 'نرخی نوێ بۆ campaign (بۆ باقی جۆرەکان NULL)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
     FOREIGN KEY (product_spec_id) REFERENCES product_specifications(id) ON DELETE CASCADE,
     UNIQUE KEY unique_promo_spec (promotion_id, product_spec_id) COMMENT 'بۆ ڕێگری لە دووبارەبوونەوە'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- coupon usage: usage_limit/used_count بۆ سنووردارکردن، و promotion_coupon_redemptions بۆ یەکجار بۆ هەر phone_number
+CREATE TABLE promotion_coupon_redemptions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  promotion_id INT NOT NULL,
+  phone_number VARCHAR(20) NOT NULL,
+  order_id INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_promo_phone (promotion_id, phone_number),
+  FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_promotions_coupon_code ON promotions(coupon_code);
+CREATE INDEX idx_promo_redemptions_order ON promotion_coupon_redemptions(order_id);
+CREATE INDEX idx_promo_redemptions_phone ON promotion_coupon_redemptions(phone_number);
 
 -- ======================================
 -- داواکاری کڕین (Purchase Orders) - پێش گەیشتنی کاڵا بە کۆگا
@@ -248,8 +271,21 @@ CREATE TABLE orders (
     order_discount DECIMAL(12,2) NOT NULL DEFAULT 0,
     status ENUM('pending', 'processing', 'shipped', 'completed', 'cancelled', 'returned') DEFAULT 'pending',
     order_source ENUM('website', 'whatsapp', 'instagram', 'manual') DEFAULT 'website' COMMENT 'سەرچاوەی داواکاری',
+    campaign_id INT NULL COMMENT 'ئەگەر ئەم داواکارییە کامپەینەکە بێت',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (campaign_id) REFERENCES promotions(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE promotion_coupon_redemptions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    promotion_id INT NOT NULL,
+    phone_number VARCHAR(20) NOT NULL,
+    order_id INT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_promo_phone (promotion_id, phone_number),
+    FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 14. خشتەی کاڵاکانی داواکاری (Order Items)
@@ -335,9 +371,12 @@ CREATE INDEX idx_stock_movements_created ON stock_movements(created_at);
 
 CREATE INDEX idx_promotions_dates ON promotions(start_date, end_date);
 CREATE INDEX idx_promotions_active ON promotions(is_active);
+CREATE INDEX idx_promotions_coupon_code ON promotions(coupon_code);
 
 CREATE INDEX idx_promotion_items_spec ON promotion_items(product_spec_id);
 CREATE INDEX idx_promotion_items_promo ON promotion_items(promotion_id);
+CREATE INDEX idx_promo_redemptions_order ON promotion_coupon_redemptions(order_id);
+CREATE INDEX idx_promo_redemptions_phone ON promotion_coupon_redemptions(phone_number);
 
 CREATE INDEX idx_purchase_orders_status ON purchase_orders(status);
 CREATE INDEX idx_purchase_orders_created ON purchase_orders(created_at);

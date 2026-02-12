@@ -661,6 +661,12 @@ function handle_api_route(array $segments, string $method): void
                     case 'POST':
                         $controller->addItem($pid);
                         return;
+                    case 'PUT':
+                    case 'PATCH':
+                        $spec = isset($_GET['spec_id']) ? (int)$_GET['spec_id'] : null;
+                        if ($spec === null) { jsonResponse(false, 'spec_id is required', null, 400); return; }
+                        $controller->updateItem($pid, $spec);
+                        return;
                     case 'DELETE':
                         $spec = isset($_GET['spec_id']) ? (int)$_GET['spec_id'] : null;
                         if ($spec === null) { jsonResponse(false, 'spec_id is required', null, 400); return; }
@@ -695,6 +701,31 @@ function handle_api_route(array $segments, string $method): void
                         $controller->destroy($id);
                     } else {
                         jsonResponse(false, 'ID is required', null, 400);
+                    }
+                    return;
+                default:
+                    jsonResponse(false, 'Method not allowed', null, 405);
+                    return;
+            }
+        case 'campaigns':
+            $controller = new CampaignController();
+            if (isset($segments[3]) && $segments[3] === 'quote') {
+                $cid = isset($segments[2]) ? (int)$segments[2] : null;
+                if ($cid === null || $cid <= 0) { jsonResponse(false, 'ID is required', null, 400); return; }
+                if ($method === 'POST') {
+                    $controller->quote($cid);
+                } else {
+                    jsonResponse(false, 'Method not allowed', null, 405);
+                }
+                return;
+            }
+            $cid = $_GET['id'] ?? (isset($segments[2]) ? (int)$segments[2] : null);
+            switch ($method) {
+                case 'GET':
+                    if ($cid !== null) {
+                        $controller->show($cid);
+                    } else {
+                        $controller->index();
                     }
                     return;
                 default:

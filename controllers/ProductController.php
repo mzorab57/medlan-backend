@@ -99,12 +99,50 @@ class ProductController
                 ps.id, ps.sku_variant, ps.spec_key, ps.spec_value, ps.image, ps.price, ps.purchase_price, ps.stock, ps.color_id, ps.size_id, ps.gender, ps.is_active,
                 c.name AS color_name, 
                 s.name AS size_name,
-                v.final_price,
-                v.discount_amount
+                COALESCE(
+                    (SELECT pi.override_price
+                     FROM promotion_items pi
+                     INNER JOIN promotions p2 ON p2.id = pi.promotion_id
+                     WHERE pi.product_spec_id = ps.id
+                      AND p2.discount_type = \'campaign\'
+                       AND p2.is_active = 1
+                       AND CURDATE() BETWEEN p2.start_date AND p2.end_date
+                       AND pi.override_price IS NOT NULL
+                       AND pi.override_price > 0
+                     ORDER BY p2.priority DESC, p2.id DESC
+                     LIMIT 1),
+                    CASE WHEN pr.coupon_code IS NULL THEN v.final_price ELSE NULL END
+                ) AS final_price,
+                CASE
+                    WHEN (SELECT 1
+                          FROM promotion_items pi2
+                          INNER JOIN promotions p3 ON p3.id = pi2.promotion_id
+                          WHERE pi2.product_spec_id = ps.id
+                            AND p3.discount_type = \'campaign\'
+                            AND p3.is_active = 1
+                            AND CURDATE() BETWEEN p3.start_date AND p3.end_date
+                            AND pi2.override_price IS NOT NULL
+                            AND pi2.override_price > 0
+                          LIMIT 1) IS NOT NULL
+                    THEN (ps.price - COALESCE(
+                            (SELECT pi.override_price
+                             FROM promotion_items pi
+                             INNER JOIN promotions p2 ON p2.id = pi.promotion_id
+                             WHERE pi.product_spec_id = ps.id
+                               AND p2.discount_type = \'campaign\'
+                               AND p2.is_active = 1
+                               AND CURDATE() BETWEEN p2.start_date AND p2.end_date
+                               AND pi.override_price IS NOT NULL
+                               AND pi.override_price > 0
+                             ORDER BY p2.priority DESC, p2.id DESC
+                             LIMIT 1), ps.price))
+                    ELSE (CASE WHEN pr.coupon_code IS NULL THEN v.discount_amount ELSE NULL END)
+                END AS discount_amount
             FROM product_specifications ps
             LEFT JOIN colors c ON c.id = ps.color_id
             LEFT JOIN sizes s ON s.id = ps.size_id
             LEFT JOIN vw_product_prices v ON v.spec_id = ps.id
+            LEFT JOIN promotions pr ON pr.id = v.promotion_id
             WHERE ps.product_id = ?
             ORDER BY ps.id');
         $st->bind_param('i', $pid);

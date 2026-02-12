@@ -64,6 +64,16 @@ class OrderController
         return (bool)$rs->fetch_assoc();
     }
 
+    private function hasTable(string $table): bool
+    {
+        global $conn;
+        $t = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+        if ($t === '') { return false; }
+        $rs = $conn->query("SHOW TABLES LIKE '$t'");
+        if (!$rs) { return false; }
+        return (bool)$rs->fetch_assoc();
+    }
+
     private function ensureDiscountExpense(int $orderId, float $amount): void
     {
         global $conn;
@@ -170,11 +180,75 @@ class OrderController
             $zero = 0.0;
             $status = 'pending';
             $createdBy = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
-            $ins = $conn->prepare('INSERT INTO orders (customer_name, phone_number, address, total_price, status, order_source, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
-            $ins->bind_param('sssdssi', $customer_name, $phone_number, $address, $zero, $status, $order_source, $createdBy);
+            $campaignBundleId = isset($d['campaign_id']) ? (int)$d['campaign_id'] : null;
+            if ($campaignBundleId !== null && $campaignBundleId <= 0) { $campaignBundleId = null; }
+
+            if ($campaignBundleId !== null) {
+                $cst = $conn->prepare("SELECT id, display_limit, extra_pool_limit
+                    FROM promotions
+                    WHERE id = ?
+                      AND discount_type = 'campaign'
+                      AND is_active = 1
+                      AND CURDATE() BETWEEN start_date AND end_date
+                    LIMIT 1");
+                $cst->bind_param('i', $campaignBundleId);
+                $cst->execute();
+                $cRow = $cst->get_result()->fetch_assoc();
+                if (!$cRow) { throw new Exception('campaign not found'); }
+                $displayLimit = $cRow['display_limit'] !== null ? (int)$cRow['display_limit'] : null;
+                $extraPool = $cRow['extra_pool_limit'] !== null ? (int)$cRow['extra_pool_limit'] : 0;
+                if ($displayLimit === null || $displayLimit <= 0) { throw new Exception('campaign display_limit required'); }
+                if ($extraPool < 0) { $extraPool = 0; }
+                $limit = $displayLimit + $extraPool;
+                $ist = $conn->prepare('SELECT product_spec_id FROM promotion_items WHERE promotion_id = ? ORDER BY id ASC LIMIT ?');
+                $ist->bind_param('ii', $campaignBundleId, $limit);
+                $ist->execute();
+                $ri = $ist->get_result();
+                $ordered = [];
+                while ($r = $ri->fetch_assoc()) { $ordered[] = (int)($r['product_spec_id'] ?? 0); }
+                if (count($ordered) < $displayLimit) { throw new Exception('campaign items incomplete'); }
+                $displaySet = [];
+                $extraSet = [];
+                for ($i = 0; $i < count($ordered); $i++) {
+                    $sid = (int)$ordered[$i];
+                    if ($sid <= 0) { continue; }
+                    if ($i < $displayLimit) $displaySet[$sid] = true;
+                    else $extraSet[$sid] = true;
+                }
+                $allowedSet = $displaySet + $extraSet;
+
+                $uniqueSpecs = [];
+                foreach ($items as $it) {
+                    $sid = (int)($it['product_spec_id'] ?? 0);
+                    if ($sid <= 0) { throw new Exception('invalid spec id'); }
+                    if (!isset($allowedSet[$sid])) { throw new Exception('campaign selection contains invalid item'); }
+                    $q = max(1, (int)($it['quantity'] ?? 1));
+                    if ($q !== 1) { throw new Exception('campaign quantity must be 1'); }
+                    $uniqueSpecs[$sid] = true;
+                }
+                $selectedSpecs = array_keys($uniqueSpecs);
+                $selectedCount = count($selectedSpecs);
+                $minCount = max(0, $displayLimit - $extraPool);
+                if ($selectedCount > $displayLimit) { throw new Exception('campaign selection exceeds display limit'); }
+                if ($selectedCount < $minCount) { throw new Exception('campaign selection below minimum'); }
+                $extraSelected = 0;
+                foreach ($selectedSpecs as $sid) { if (isset($extraSet[(int)$sid])) $extraSelected++; }
+                if ($extraSelected > $extraPool) { throw new Exception('campaign selection exceeds extra pool'); }
+            }
+
+            if ($this->hasColumn('orders', 'campaign_id')) {
+                $ins = $conn->prepare('INSERT INTO orders (customer_name, phone_number, address, total_price, status, order_source, created_by_user_id, campaign_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+                $ins->bind_param('sssdssii', $customer_name, $phone_number, $address, $zero, $status, $order_source, $createdBy, $campaignBundleId);
+            } else {
+                $ins = $conn->prepare('INSERT INTO orders (customer_name, phone_number, address, total_price, status, order_source, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
+                $ins->bind_param('sssdssi', $customer_name, $phone_number, $address, $zero, $status, $order_source, $createdBy);
+            }
             $ins->execute();
             $orderId = (int)$conn->insert_id;
             $total = 0.0;
+            $costTotal = 0.0;
+            $lines = [];
+            $campaignSelections = [];
             foreach ($items as $it) {
                 $specId = (int)($it['product_spec_id'] ?? 0);
                 $qty = max(1, (int)($it['quantity'] ?? 1));
@@ -191,17 +265,44 @@ class OrderController
                 if ((int)$r['stock'] < $qty) {
                     throw new Exception('insufficient stock');
                 }
-                $view = $conn->prepare('SELECT promotion_id, discount_type, discount_value, final_price, discount_amount FROM vw_product_prices WHERE spec_id = ?');
+                $view = $conn->prepare('SELECT v.promotion_id, v.discount_type, v.discount_value, v.final_price, v.discount_amount, p.coupon_code AS coupon_code FROM vw_product_prices v LEFT JOIN promotions p ON p.id = v.promotion_id WHERE v.spec_id = ?');
                 $view->bind_param('i', $specId);
                 $view->execute();
                 $v = $view->get_result()->fetch_assoc();
                 $origPrice = (float)$r['spec_price'];
                 $cost = (float)$r['cost'];
+                $costTotal += $cost * $qty;
                 $promoId = isset($v['promotion_id']) ? (int)$v['promotion_id'] : null;
                 $productId = (int)$r['product_id'];
-                $promoPrice = isset($v['final_price']) ? (float)$v['final_price'] : (float)$r['spec_price'];
+                if ($promoId !== null && isset($v['coupon_code']) && $v['coupon_code'] !== null && $v['coupon_code'] !== '') {
+                    $promoId = null;
+                }
+                $campaign = $conn->prepare("SELECT p.id, pi.override_price
+                    FROM promotions p
+                    INNER JOIN promotion_items pi ON pi.promotion_id = p.id
+                    WHERE p.discount_type = 'campaign'
+                      AND p.is_active = 1
+                      AND CURDATE() BETWEEN p.start_date AND p.end_date
+                      AND pi.product_spec_id = ?
+                      AND pi.override_price IS NOT NULL
+                      AND pi.override_price > 0
+                    ORDER BY p.priority DESC, p.id DESC
+                    LIMIT 1");
+                $campaign->bind_param('i', $specId);
+                $campaign->execute();
+                $cr = $campaign->get_result()->fetch_assoc();
+                $campaignApplied = false;
+                if ($cr) {
+                    $promoId = (int)$cr['id'];
+                    $promoPrice = (float)$cr['override_price'];
+                    $campaignApplied = true;
+                    if (!isset($campaignSelections[$promoId])) { $campaignSelections[$promoId] = []; }
+                    $campaignSelections[$promoId][$specId] = true;
+                } else {
+                    $promoPrice = ($promoId !== null && isset($v['final_price'])) ? (float)$v['final_price'] : (float)$r['spec_price'];
+                }
                 $finalPrice = $promoPrice;
-                $discountAmount = isset($v['discount_amount']) ? (float)$v['discount_amount'] : max(0.0, $origPrice - $finalPrice);
+                $discountAmount = (!$campaignApplied && $promoId !== null && isset($v['discount_amount'])) ? (float)$v['discount_amount'] : max(0.0, $origPrice - $finalPrice);
                 $unitPrice = null;
                 if (array_key_exists('unit_price', $it) && $it['unit_price'] !== null && $it['unit_price'] !== '') {
                     $unitPrice = (float)$it['unit_price'];
@@ -222,6 +323,11 @@ class OrderController
                 }
                 $oi->execute();
                 $total += $finalPrice * $qty;
+                $lines[] = [
+                    'spec_id' => $specId,
+                    'line_total' => $finalPrice * $qty,
+                    'line_cost' => $cost * $qty,
+                ];
                 $orderItemId = (int)$conn->insert_id;
                 $sm = $conn->prepare('INSERT INTO stock_movements (product_spec_id, type, quantity, order_item_id, description) VALUES (?, ?, ?, ?, ?)');
                 $type = 'sale';
@@ -233,6 +339,144 @@ class OrderController
                 $upd->bind_param('ii', $qty, $specId);
                 $upd->execute();
             }
+
+            if ($createdBy === null && $campaignSelections) {
+                foreach ($campaignSelections as $campaignId => $specSet) {
+                    if (!$this->hasColumn('promotions', 'display_limit') || !$this->hasColumn('promotions', 'extra_pool_limit')) { continue; }
+                    $cst = $conn->prepare("SELECT display_limit, extra_pool_limit
+                        FROM promotions
+                        WHERE id = ?
+                          AND discount_type = 'campaign'
+                          AND is_active = 1
+                          AND CURDATE() BETWEEN start_date AND end_date
+                        LIMIT 1");
+                    $campaignIdInt = (int)$campaignId;
+                    $cst->bind_param('i', $campaignIdInt);
+                    $cst->execute();
+                    $cRow = $cst->get_result()->fetch_assoc();
+                    if (!$cRow) { continue; }
+                    $displayLimit = $cRow['display_limit'] !== null ? (int)$cRow['display_limit'] : null;
+                    if ($displayLimit === null || $displayLimit <= 0) { continue; }
+                    $extraPool = $cRow['extra_pool_limit'] !== null ? (int)$cRow['extra_pool_limit'] : 0;
+                    if ($extraPool < 0) { $extraPool = 0; }
+                    $selectedSpecs = array_keys($specSet);
+                    $selectedCount = count($selectedSpecs);
+                    $minCount = max(0, $displayLimit - $extraPool);
+                    if ($selectedCount > $displayLimit) { throw new Exception('campaign selection exceeds display limit'); }
+                    if ($selectedCount < $minCount) { throw new Exception('campaign selection below minimum'); }
+
+                    $limit = $displayLimit + $extraPool;
+                    $ist = $conn->prepare('SELECT product_spec_id FROM promotion_items WHERE promotion_id = ? ORDER BY id ASC LIMIT ?');
+                    $ist->bind_param('ii', $campaignIdInt, $limit);
+                    $ist->execute();
+                    $ri = $ist->get_result();
+                    $ordered = [];
+                    while ($r = $ri->fetch_assoc()) { $ordered[] = (int)($r['product_spec_id'] ?? 0); }
+                    $displaySet = [];
+                    $extraSet = [];
+                    for ($i = 0; $i < count($ordered); $i++) {
+                        $sid = (int)$ordered[$i];
+                        if ($sid <= 0) { continue; }
+                        if ($i < $displayLimit) $displaySet[$sid] = true;
+                        else $extraSet[$sid] = true;
+                    }
+                    $allowedSet = $displaySet + $extraSet;
+                    foreach ($selectedSpecs as $sid) {
+                        if (!isset($allowedSet[(int)$sid])) { throw new Exception('campaign selection contains invalid item'); }
+                    }
+                    $extraSelected = 0;
+                    foreach ($selectedSpecs as $sid) { if (isset($extraSet[(int)$sid])) $extraSelected++; }
+                    if ($extraSelected > $extraPool) { throw new Exception('campaign selection exceeds extra pool'); }
+                }
+            }
+
+            $orderDiscount = 0.0;
+            $couponCode = null;
+            if (isset($d['coupon_code'])) { $couponCode = sanitize((string)$d['coupon_code']); }
+            elseif (isset($d['coupon'])) { $couponCode = sanitize((string)$d['coupon']); }
+            if ($couponCode !== null) {
+                $couponCode = strtoupper(preg_replace('/\s+/', '', $couponCode));
+                if ($couponCode === '') { $couponCode = null; }
+            }
+            if ($couponCode !== null) {
+                if (!$this->hasColumn('promotions', 'coupon_code')) { throw new Exception('Missing DB columns for coupons'); }
+                if (!$this->hasTable('promotion_coupon_redemptions')) { throw new Exception('Missing DB table promotion_coupon_redemptions'); }
+                if (!$this->hasColumn('orders', 'order_discount')) { throw new Exception('Missing DB column orders.order_discount'); }
+
+                $promo = $conn->prepare("SELECT id, discount_type, discount_value, usage_limit, used_count, min_order_amount
+                    FROM promotions
+                    WHERE coupon_code IS NOT NULL
+                      AND UPPER(coupon_code) = ?
+                      AND is_active = 1
+                      AND CURDATE() BETWEEN start_date AND end_date
+                    ORDER BY priority DESC, id DESC
+                    LIMIT 1
+                    FOR UPDATE");
+                $promo->bind_param('s', $couponCode);
+                $promo->execute();
+                $pr = $promo->get_result()->fetch_assoc();
+                if (!$pr) { throw new Exception('Invalid coupon'); }
+                $couponPromoId = (int)$pr['id'];
+                $usageLimit = $pr['usage_limit'] !== null ? (int)$pr['usage_limit'] : null;
+                $usedCount = $pr['used_count'] !== null ? (int)$pr['used_count'] : 0;
+                if ($usageLimit !== null && $usedCount >= $usageLimit) { throw new Exception('Coupon usage limit reached'); }
+                $minOrder = $pr['min_order_amount'] !== null ? (float)$pr['min_order_amount'] : 0.0;
+                if ($total < $minOrder) { throw new Exception('Order amount too low for coupon'); }
+
+                $redeem = $conn->prepare('SELECT id FROM promotion_coupon_redemptions WHERE promotion_id = ? AND phone_number = ? LIMIT 1');
+                $redeem->bind_param('is', $couponPromoId, $phone_number);
+                $redeem->execute();
+                if ($redeem->get_result()->fetch_assoc()) { throw new Exception('Coupon already used for this phone'); }
+
+                $restrict = $conn->prepare('SELECT product_spec_id FROM promotion_items WHERE promotion_id = ?');
+                $restrict->bind_param('i', $couponPromoId);
+                $restrict->execute();
+                $rr = $restrict->get_result();
+                $eligibleSpecs = [];
+                while ($r = $rr->fetch_assoc()) {
+                    $sid = (int)($r['product_spec_id'] ?? 0);
+                    if ($sid > 0) { $eligibleSpecs[$sid] = true; }
+                }
+                $hasRestrictions = !empty($eligibleSpecs);
+
+                $eligibleTotal = 0.0;
+                $eligibleCost = 0.0;
+                foreach ($lines as $ln) {
+                    $sid = (int)$ln['spec_id'];
+                    if (!$hasRestrictions || isset($eligibleSpecs[$sid])) {
+                        $eligibleTotal += (float)$ln['line_total'];
+                        $eligibleCost += (float)$ln['line_cost'];
+                    }
+                }
+                if ($hasRestrictions && $eligibleTotal <= 0) { throw new Exception('No eligible items for coupon'); }
+
+                $discountType = (string)($pr['discount_type'] ?? '');
+                $discountValue = (float)($pr['discount_value'] ?? 0);
+                if ($discountValue <= 0) { throw new Exception('Invalid coupon'); }
+                if ($discountType === 'percentage') {
+                    $orderDiscount = round($eligibleTotal * ($discountValue / 100), 2);
+                } else {
+                    $orderDiscount = $discountValue;
+                }
+                if ($orderDiscount < 0) { $orderDiscount = 0.0; }
+                if ($orderDiscount > $eligibleTotal) { $orderDiscount = $eligibleTotal; }
+
+                $grossProfit = $eligibleTotal - $eligibleCost;
+                $maxDiscount = $grossProfit > 0 ? $grossProfit : 0.0;
+                if ($orderDiscount > $maxDiscount) { throw new Exception('Coupon discount exceeds profit'); }
+
+                $upPromo = $conn->prepare('UPDATE promotions SET used_count = used_count + 1 WHERE id = ?');
+                $upPromo->bind_param('i', $couponPromoId);
+                $upPromo->execute();
+
+                $insRed = $conn->prepare('INSERT INTO promotion_coupon_redemptions (promotion_id, phone_number, order_id) VALUES (?, ?, ?)');
+                $insRed->bind_param('isi', $couponPromoId, $phone_number, $orderId);
+                $insRed->execute();
+
+                $total = $total - $orderDiscount;
+                if ($total < 0) { $total = 0.0; }
+            }
+
             $threshold = $this->getDeliveryThreshold();
             $reqPaidBy = isset($d['delivery_paid_by']) ? sanitize($d['delivery_paid_by']) : null;
             $reqPaidBy = $reqPaidBy ? strtolower($reqPaidBy) : null;
@@ -260,8 +504,13 @@ class OrderController
                     $deliveryFee = (float)$cr['fee'];
                 }
             }
-            $uord = $conn->prepare('UPDATE orders SET total_price = ?, delivery_city_id = ?, delivery_fee = ?, delivery_paid_by = ? WHERE id = ?');
-            $uord->bind_param('didsi', $total, $cityId, $deliveryFee, $paidBy, $orderId);
+            if ($this->hasColumn('orders', 'order_discount')) {
+                $uord = $conn->prepare('UPDATE orders SET total_price = ?, order_discount = ?, delivery_city_id = ?, delivery_fee = ?, delivery_paid_by = ? WHERE id = ?');
+                $uord->bind_param('ddidsi', $total, $orderDiscount, $cityId, $deliveryFee, $paidBy, $orderId);
+            } else {
+                $uord = $conn->prepare('UPDATE orders SET total_price = ?, delivery_city_id = ?, delivery_fee = ?, delivery_paid_by = ? WHERE id = ?');
+                $uord->bind_param('didsi', $total, $cityId, $deliveryFee, $paidBy, $orderId);
+            }
             $uord->execute();
             $conn->commit();
             jsonResponse(true, 'Created', ['id' => $orderId, 'total_price' => $total], 201);
@@ -274,15 +523,30 @@ class OrderController
     public function list(): void
     {
         global $conn;
+        $hasCampaign = $this->hasColumn('orders', 'campaign_id');
         $status = $_GET['status'] ?? null;
         $source = $_GET['source'] ?? null;
         $where = [];
         $types = '';
         $params = [];
-        if ($status !== null) { $where[] = 'status = ?'; $types .= 's'; $params[] = sanitize($status); }
-        if ($source !== null) { $where[] = 'order_source = ?'; $types .= 's'; $params[] = sanitize($source); }
+        $prefix = $hasCampaign ? 'o.' : '';
+        if ($status !== null) { $where[] = $prefix . 'status = ?'; $types .= 's'; $params[] = sanitize($status); }
+        if ($source !== null) { $where[] = $prefix . 'order_source = ?'; $types .= 's'; $params[] = sanitize($source); }
         $w = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
-        $sql = "SELECT id, customer_name, phone_number, total_price, status, order_source, delivery_city_id, delivery_fee, delivery_paid_by, created_by_user_id, created_at FROM orders $w ORDER BY id DESC LIMIT 100";
+        if ($hasCampaign) {
+            $sql = "SELECT o.id, o.customer_name, o.phone_number, o.total_price, o.status, o.order_source, o.delivery_city_id, o.delivery_fee, o.delivery_paid_by, o.created_by_user_id, o.created_at,
+                           o.campaign_id, cp.name AS campaign_name
+                    FROM orders o
+                    LEFT JOIN promotions cp ON cp.id = o.campaign_id AND cp.discount_type = 'campaign'
+                    $w
+                    ORDER BY o.id DESC
+                    LIMIT 100";
+        } else {
+            $sql = "SELECT id, customer_name, phone_number, total_price, status, order_source, delivery_city_id, delivery_fee, delivery_paid_by, created_by_user_id, created_at
+                    FROM orders $w
+                    ORDER BY id DESC
+                    LIMIT 100";
+        }
         $st = $conn->prepare($sql);
         if ($types !== '') {
             $st->bind_param($types, ...$params);
@@ -298,7 +562,17 @@ class OrderController
     {
         global $conn;
         $oid = (int)$id;
-        $ord = $conn->prepare('SELECT o.*, dc.name AS delivery_city_name, dc.city_key AS delivery_city_key FROM orders o LEFT JOIN delivery_cities dc ON dc.id = o.delivery_city_id WHERE o.id = ?');
+        $hasCampaign = $this->hasColumn('orders', 'campaign_id');
+        if ($hasCampaign) {
+            $ord = $conn->prepare("SELECT o.*, dc.name AS delivery_city_name, dc.city_key AS delivery_city_key,
+                                          cp.name AS campaign_name
+                                   FROM orders o
+                                   LEFT JOIN delivery_cities dc ON dc.id = o.delivery_city_id
+                                   LEFT JOIN promotions cp ON cp.id = o.campaign_id AND cp.discount_type = 'campaign'
+                                   WHERE o.id = ?");
+        } else {
+            $ord = $conn->prepare('SELECT o.*, dc.name AS delivery_city_name, dc.city_key AS delivery_city_key FROM orders o LEFT JOIN delivery_cities dc ON dc.id = o.delivery_city_id WHERE o.id = ?');
+        }
         $ord->bind_param('i', $oid);
         $ord->execute();
         $o = $ord->get_result()->fetch_assoc();
