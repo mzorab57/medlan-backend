@@ -249,6 +249,14 @@ class OrderController
             $costTotal = 0.0;
             $lines = [];
             $campaignSelections = [];
+            $hasVariantImageId = $this->hasColumn('order_items', 'variant_image_id');
+            $hasVariantImage = $this->hasColumn('order_items', 'variant_image');
+            $bind = function ($stmt, string $types, array $params): void {
+                $refs = [];
+                $refs[] = &$types;
+                foreach ($params as $k => $v) { $refs[] = &$params[$k]; }
+                call_user_func_array([$stmt, 'bind_param'], $refs);
+            };
             foreach ($items as $it) {
                 $specId = (int)($it['product_spec_id'] ?? 0);
                 $qty = max(1, (int)($it['quantity'] ?? 1));
@@ -303,6 +311,16 @@ class OrderController
                 }
                 $finalPrice = $promoPrice;
                 $discountAmount = (!$campaignApplied && $promoId !== null && isset($v['discount_amount'])) ? (float)$v['discount_amount'] : max(0.0, $origPrice - $finalPrice);
+                $variantImageId = isset($it['variant_image_id']) ? (int)$it['variant_image_id'] : 0;
+                $variantImage = null;
+                if (($hasVariantImageId || $hasVariantImage) && $variantImageId > 0) {
+                    $imgSt = $conn->prepare('SELECT image FROM product_spec_images WHERE id = ? AND spec_id = ? LIMIT 1');
+                    $imgSt->bind_param('ii', $variantImageId, $specId);
+                    $imgSt->execute();
+                    $imgRow = $imgSt->get_result()->fetch_assoc();
+                    if ($imgRow && isset($imgRow['image'])) { $variantImage = (string)$imgRow['image']; }
+                    else { $variantImageId = 0; }
+                } else { $variantImageId = 0; }
                 $unitPrice = null;
                 if (array_key_exists('unit_price', $it) && $it['unit_price'] !== null && $it['unit_price'] !== '') {
                     $unitPrice = (float)$it['unit_price'];
@@ -315,11 +333,33 @@ class OrderController
                     $discountAmount = max(0.0, $origPrice - $finalPrice);
                 }
                 if ($promoId === null) {
-                    $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)');
-                    $oi->bind_param('iiiidddd', $orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount);
+                    if ($hasVariantImageId && $hasVariantImage) {
+                        $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id, variant_image_id, variant_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULLIF(?, 0), ?)');
+                        $bind($oi, 'iiiiddddis', [$orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $variantImageId, $variantImage]);
+                    } elseif ($hasVariantImageId) {
+                        $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id, variant_image_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULLIF(?, 0))');
+                        $bind($oi, 'iiiiddddi', [$orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $variantImageId]);
+                    } elseif ($hasVariantImage) {
+                        $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id, variant_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)');
+                        $bind($oi, 'iiiidddds', [$orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $variantImage]);
+                    } else {
+                        $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)');
+                        $oi->bind_param('iiiidddd', $orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount);
+                    }
                 } else {
-                    $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-                    $oi->bind_param('iiiiddddi', $orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $promoId);
+                    if ($hasVariantImageId && $hasVariantImage) {
+                        $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id, variant_image_id, variant_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0), ?)');
+                        $bind($oi, 'iiiiddddiis', [$orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $promoId, $variantImageId, $variantImage]);
+                    } elseif ($hasVariantImageId) {
+                        $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id, variant_image_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0))');
+                        $bind($oi, 'iiiiddddii', [$orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $promoId, $variantImageId]);
+                    } elseif ($hasVariantImage) {
+                        $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id, variant_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                        $bind($oi, 'iiiiddddis', [$orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $promoId, $variantImage]);
+                    } else {
+                        $oi = $conn->prepare('INSERT INTO order_items (order_id, product_id, product_spec_id, quantity, price, original_price, cost, discount_amount, promotion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                        $oi->bind_param('iiiiddddi', $orderId, $productId, $specId, $qty, $finalPrice, $origPrice, $cost, $discountAmount, $promoId);
+                    }
                 }
                 $oi->execute();
                 $total += $finalPrice * $qty;
@@ -563,6 +603,8 @@ class OrderController
         global $conn;
         $oid = (int)$id;
         $hasCampaign = $this->hasColumn('orders', 'campaign_id');
+        $hasVariantImageId = $this->hasColumn('order_items', 'variant_image_id');
+        $hasVariantImage = $this->hasColumn('order_items', 'variant_image');
         if ($hasCampaign) {
             $ord = $conn->prepare("SELECT o.*, dc.name AS delivery_city_name, dc.city_key AS delivery_city_key,
                                           cp.name AS campaign_name
@@ -580,7 +622,61 @@ class OrderController
             jsonResponse(false, 'Not Found', null, 404);
             return;
         }
-        $items = $conn->prepare('SELECT * FROM order_items WHERE order_id = ?');
+        if ($hasVariantImageId && $hasVariantImage) {
+            $items = $conn->prepare("SELECT oi.*,
+                                            p.name AS product_name,
+                                            COALESCE(
+                                              oi.variant_image,
+                                              (SELECT psi.image FROM product_spec_images psi WHERE psi.id = oi.variant_image_id LIMIT 1),
+                                              (SELECT psi2.image
+                                                 FROM product_spec_images psi2
+                                                WHERE psi2.spec_id = oi.product_spec_id
+                                                ORDER BY psi2.is_primary DESC, psi2.sort_order ASC, psi2.id ASC
+                                                LIMIT 1)
+                                            ) AS variant_image
+                                       FROM order_items oi
+                                       LEFT JOIN products p ON p.id = oi.product_id
+                                       WHERE oi.order_id = ?");
+        } elseif ($hasVariantImageId) {
+            $items = $conn->prepare("SELECT oi.*,
+                                            p.name AS product_name,
+                                            COALESCE(
+                                              (SELECT psi.image FROM product_spec_images psi WHERE psi.id = oi.variant_image_id LIMIT 1),
+                                              (SELECT psi2.image
+                                                 FROM product_spec_images psi2
+                                                WHERE psi2.spec_id = oi.product_spec_id
+                                                ORDER BY psi2.is_primary DESC, psi2.sort_order ASC, psi2.id ASC
+                                                LIMIT 1)
+                                            ) AS variant_image
+                                       FROM order_items oi
+                                       LEFT JOIN products p ON p.id = oi.product_id
+                                       WHERE oi.order_id = ?");
+        } elseif ($hasVariantImage) {
+            $items = $conn->prepare("SELECT oi.*,
+                                            p.name AS product_name,
+                                            COALESCE(
+                                              oi.variant_image,
+                                              (SELECT psi2.image
+                                                 FROM product_spec_images psi2
+                                                WHERE psi2.spec_id = oi.product_spec_id
+                                                ORDER BY psi2.is_primary DESC, psi2.sort_order ASC, psi2.id ASC
+                                                LIMIT 1)
+                                            ) AS variant_image
+                                       FROM order_items oi
+                                       LEFT JOIN products p ON p.id = oi.product_id
+                                       WHERE oi.order_id = ?");
+        } else {
+            $items = $conn->prepare("SELECT oi.*,
+                                            p.name AS product_name,
+                                            (SELECT psi.image
+                                               FROM product_spec_images psi
+                                              WHERE psi.spec_id = oi.product_spec_id
+                                              ORDER BY psi.is_primary DESC, psi.sort_order ASC, psi.id ASC
+                                              LIMIT 1) AS variant_image
+                                       FROM order_items oi
+                                       LEFT JOIN products p ON p.id = oi.product_id
+                                       WHERE oi.order_id = ?");
+        }
         $items->bind_param('i', $oid);
         $items->execute();
         $rows = [];

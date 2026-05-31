@@ -254,11 +254,13 @@ CREATE TABLE cart_items (
     cart_id INT NOT NULL,
     product_id INT NOT NULL,
     product_spec_id INT COMMENT 'بۆ دیاریکردنی variant (ڕەنگ/سایز)',
+    variant_image_id INT NULL COMMENT 'وێنەی هەڵبژێردراوی variant (لە product_spec_images)',
     quantity INT NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE CASCADE,
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-    FOREIGN KEY (product_spec_id) REFERENCES product_specifications(id) ON DELETE SET NULL
+    FOREIGN KEY (product_spec_id) REFERENCES product_specifications(id) ON DELETE SET NULL,
+    FOREIGN KEY (variant_image_id) REFERENCES product_spec_images(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 13. خشتەی داواکارییەکان (Orders)
@@ -294,6 +296,8 @@ CREATE TABLE order_items (
     order_id INT NOT NULL,
     product_id INT NOT NULL,
     product_spec_id INT COMMENT 'بۆ دیاریکردنی variant',
+    variant_image_id INT NULL COMMENT 'وێنەی هەڵبژێردراوی variant (لە product_spec_images)',
+    variant_image VARCHAR(1000) NULL COMMENT 'پاتھی وێنە لە کاتی دروستکردنی داواکاری',
     quantity INT NOT NULL,
     price DECIMAL(12,2) NOT NULL COMMENT 'نرخی فرۆشتن لەو کاتەدا (دوای discount)',
     original_price DECIMAL(12,2) NOT NULL COMMENT 'نرخی سەرەتایی پێش discount',
@@ -304,7 +308,8 @@ CREATE TABLE order_items (
     FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
     FOREIGN KEY (product_spec_id) REFERENCES product_specifications(id) ON DELETE SET NULL,
-    FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE SET NULL
+    FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE SET NULL,
+    FOREIGN KEY (variant_image_id) REFERENCES product_spec_images(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 15. خشتەی جوڵەی کۆگا (Stock Movements)

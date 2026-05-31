@@ -1,6 +1,17 @@
 <?php
 class CartController
 {
+    private function hasColumn(string $table, string $column): bool
+    {
+        global $conn;
+        $t = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+        $c = preg_replace('/[^a-zA-Z0-9_]/', '', $column);
+        if ($t === '' || $c === '') { return false; }
+        $rs = $conn->query("SHOW COLUMNS FROM `$t` LIKE '$c'");
+        if (!$rs) { return false; }
+        return (bool)$rs->fetch_assoc();
+    }
+
     public function create(): void
     {
         global $conn;
@@ -26,7 +37,36 @@ class CartController
         $cart->execute();
         $c = $cart->get_result()->fetch_assoc();
         if (!$c) { jsonResponse(false, 'Not Found', null, 404); return; }
-        $items = $conn->prepare('SELECT ci.id, ci.product_id, ci.product_spec_id, ci.quantity, p.name AS product_name FROM cart_items ci INNER JOIN products p ON p.id = ci.product_id WHERE ci.cart_id = ? ORDER BY ci.id');
+        $hasImgId = $this->hasColumn('cart_items', 'variant_image_id');
+        if ($hasImgId) {
+            $items = $conn->prepare("SELECT ci.id, ci.product_id, ci.product_spec_id, ci.quantity,
+                                            ci.variant_image_id,
+                                            p.name AS product_name,
+                                            COALESCE(
+                                              (SELECT psi.image FROM product_spec_images psi WHERE psi.id = ci.variant_image_id LIMIT 1),
+                                              (SELECT psi2.image
+                                                 FROM product_spec_images psi2
+                                                WHERE psi2.spec_id = ci.product_spec_id
+                                                ORDER BY psi2.is_primary DESC, psi2.sort_order ASC, psi2.id ASC
+                                                LIMIT 1)
+                                            ) AS variant_image
+                                       FROM cart_items ci
+                                       INNER JOIN products p ON p.id = ci.product_id
+                                       WHERE ci.cart_id = ?
+                                       ORDER BY ci.id");
+        } else {
+            $items = $conn->prepare("SELECT ci.id, ci.product_id, ci.product_spec_id, ci.quantity,
+                                            p.name AS product_name,
+                                            (SELECT psi.image
+                                               FROM product_spec_images psi
+                                              WHERE psi.spec_id = ci.product_spec_id
+                                              ORDER BY psi.is_primary DESC, psi.sort_order ASC, psi.id ASC
+                                              LIMIT 1) AS variant_image
+                                       FROM cart_items ci
+                                       INNER JOIN products p ON p.id = ci.product_id
+                                       WHERE ci.cart_id = ?
+                                       ORDER BY ci.id");
+        }
         $id = (int)$c['id'];
         $items->bind_param('i', $id);
         $items->execute();
@@ -42,6 +82,7 @@ class CartController
         $d = getJsonInput();
         $session = sanitize($d['session_id'] ?? '');
         $specId = (int)($d['product_spec_id'] ?? 0);
+        $variantImageId = isset($d['variant_image_id']) ? (int)$d['variant_image_id'] : null;
         $qty = max(1, (int)($d['quantity'] ?? 1));
         if ($session === '' || $specId <= 0) { jsonResponse(false, 'session_id and product_spec_id required', null, 422); return; }
         $c = $conn->prepare('SELECT id FROM carts WHERE session_id = ?');
@@ -60,8 +101,26 @@ class CartController
         $row = $ps->get_result()->fetch_assoc();
         if (!$row) { jsonResponse(false, 'Invalid product_spec_id', null, 422); return; }
         $productId = (int)$row['product_id'];
-        $ci = $conn->prepare('INSERT INTO cart_items (cart_id, product_id, product_spec_id, quantity) VALUES (?, ?, ?, ?)');
-        $ci->bind_param('iiii', $cartId, $productId, $specId, $qty);
+
+        $hasImgId = $this->hasColumn('cart_items', 'variant_image_id');
+        if ($hasImgId && $variantImageId !== null && $variantImageId > 0) {
+            $chk = $conn->prepare('SELECT id FROM product_spec_images WHERE id = ? AND spec_id = ? LIMIT 1');
+            $chk->bind_param('ii', $variantImageId, $specId);
+            $chk->execute();
+            $ok = $chk->get_result()->fetch_assoc();
+            if (!$ok) { $variantImageId = null; }
+        } else {
+            $variantImageId = null;
+        }
+
+        if ($hasImgId) {
+            $ci = $conn->prepare('INSERT INTO cart_items (cart_id, product_id, product_spec_id, quantity, variant_image_id) VALUES (?, ?, ?, ?, NULLIF(?, 0))');
+            $imgId = $variantImageId !== null ? (int)$variantImageId : 0;
+            $ci->bind_param('iiiii', $cartId, $productId, $specId, $qty, $imgId);
+        } else {
+            $ci = $conn->prepare('INSERT INTO cart_items (cart_id, product_id, product_spec_id, quantity) VALUES (?, ?, ?, ?)');
+            $ci->bind_param('iiii', $cartId, $productId, $specId, $qty);
+        }
         if (!$ci->execute()) {
             jsonResponse(false, 'Error', null, 500); return;
         }
